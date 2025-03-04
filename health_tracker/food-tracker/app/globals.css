@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 245, 245, 247;
+  --background-end-rgb: 255, 255, 255;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 0, 0, 0;
+    --background-end-rgb: 28, 28, 30;
+  }
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb));
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary-600 hover:bg-primary-700 text-white font-semibold py-2 px-4 rounded-md transition-colors;
+  }
+  
+  .btn-secondary {
+    @apply bg-secondary-600 hover:bg-secondary-700 text-white font-semibold py-2 px-4 rounded-md transition-colors;
+  }
+  
+  .btn-outline {
+    @apply border border-gray-300 hover:bg-gray-100 text-gray-800 font-semibold py-2 px-4 rounded-md transition-colors;
+  }
+  
+  .input-field {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-gray-800 bg-white;
+  }
+  
+  .card {
+    @apply bg-white dark:bg-gray-800 rounded-lg shadow-md p-6;
+  }
+  
+  .section-title {
+    @apply text-2xl font-bold text-gray-900 dark:text-white mb-4;
+  }
+
+  /* Apple-style form controls */
+  .apple-input {
+    @apply w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent shadow-sm;
+  }
+
+  .apple-select {
+    @apply w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent shadow-sm appearance-none bg-no-repeat;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.75rem center;
+    background-size: 1.5em 1.5em;
+  }
+
+  .apple-btn {
+    @apply px-6 py-3 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors shadow-sm;
+  }
+
+  .apple-card {
+    @apply bg-white rounded-2xl shadow-apple p-6 border border-gray-100;
+  }
+  
+  .segmented-control {
+    @apply flex rounded-xl bg-gray-100 p-1;
+  }
+  
+  .segmented-control-option {
+    @apply py-2 px-4 rounded-lg text-gray-600 text-sm font-medium;
+  }
+  
+  .segmented-control-option-active {
+    @apply bg-white text-gray-900 shadow-sm;
+  }
+  
+  .meal-button {
+    @apply py-3 px-4 rounded-xl text-white font-medium transition-colors flex items-center justify-between w-full;
+  }
+  
+  .meal-button-default {
+    @apply bg-red-500 hover:bg-red-600;
+  }
+  
+  .meal-button-completed {
+    @apply bg-green-500 hover:bg-green-600;
+  }
+  
+  .calendar-day {
+    @apply w-10 h-10 flex items-center justify-center rounded-full text-sm;
+  }
+  
+  .calendar-day-neutral {
+    @apply text-gray-600;
+  }
+  
+  .calendar-day-completed {
+    @apply bg-green-100 text-green-800;
+  }
+  
+  .calendar-day-missed {
+    @apply bg-red-100 text-red-800;
+  }
+  
+  .calendar-day-current {
+    @apply ring-2 ring-primary-500;
+  }
+} 

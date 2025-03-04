@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Tracker - How to Run</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1, h2 {
+            color: #FF3B30;
+        }
+        code {
+            background: #f5f5f7;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+        pre {
+            background: #f5f5f7;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+        .steps {
+            margin-left: 20px;
+        }
+        .steps li {
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Food Tracker - How to Run</h1>
+    
+    <p>This document provides instructions on how to run the Food Tracker application. This is a Next.js application that uses TypeScript, Tailwind CSS, and Firebase.</p>
+    
+    <h2>Prerequisites</h2>
+    <ul>
+        <li>Node.js (version 16.8.0 or later)</li>
+        <li>npm (included with Node.js)</li>
+    </ul>
+    
+    <h2>Running the Application</h2>
+    
+    <h3>Method 1: Using Batch Files (Windows)</h3>
+    <ol class="steps">
+        <li>
+            <strong>Setup the application:</strong><br>
+            Double-click the <code>setup.bat</code> file in the project folder. This will install all the necessary dependencies.
+        </li>
+        <li>
+            <strong>Start the development server:</strong><br>
+            Double-click the <code>run_dev.bat</code> file in the project folder. This will start the development server.
+        </li>
+        <li>
+            <strong>Access the application:</strong><br>
+            Open your web browser and navigate to <a href="http://localhost:3000">http://localhost:3000</a>
+        </li>
+    </ol>
+    
+    <h3>Method 2: Using Command Line</h3>
+    <ol class="steps">
+        <li>
+            <strong>Open a command prompt or terminal</strong>
+        </li>
+        <li>
+            <strong>Navigate to the project directory:</strong>
+            <pre><code>cd path/to/food-tracker</code></pre>
+        </li>
+        <li>
+            <strong>Install dependencies (first time only):</strong>
+            <pre><code>npm install</code></pre>
+        </li>
+        <li>
+            <strong>Start the development server:</strong>
+            <pre><code>npm run dev</code></pre>
+        </li>
+        <li>
+            <strong>Access the application:</strong><br>
+            Open your web browser and navigate to <a href="http://localhost:3000">http://localhost:3000</a>
+        </li>
+    </ol>
+    
+    <h2>Troubleshooting</h2>
+    
+    <h3>Common Issues:</h3>
+    <ul>
+        <li>
+            <strong>Security Restrictions:</strong><br>
+            If you encounter security restrictions when running the batch files or npm commands, try running them as administrator.
+        </li>
+        <li>
+            <strong>Port Already in Use:</strong><br>
+            If port 3000 is already in use, you might see an error. You can change the port by updating the <code>package.json</code> file and changing the dev script to:
+            <pre><code>"dev": "next dev -p 3001"</code></pre>
+            (Replace 3001 with any available port)
+        </li>
+        <li>
+            <strong>Missing Dependencies:</strong><br>
+            If you encounter errors about missing dependencies, try running:
+            <pre><code>npm install</code></pre>
+            again to ensure all dependencies are properly installed.
+        </li>
+    </ul>
+    
+    <h2>Firebase Configuration</h2>
+    <p>Before the application can fully function, you need to set up a Firebase project and update the configuration in <code>services/firebase.ts</code> with your own Firebase project details.</p>
+</body>
+</html> 

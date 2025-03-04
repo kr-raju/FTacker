@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Tracker - Start Here</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1, h2, h3 {
+            color: #FF3B30;
+        }
+        .btn {
+            display: inline-block;
+            background-color: #FF3B30;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 500;
+            margin: 10px 0;
+        }
+        .btn:hover {
+            background-color: #E5322A;
+        }
+        .card {
+            border: 1px solid #E5E5EA;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            background-color: #F5F5F7;
+        }
+        code {
+            background: #f1f1f1;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .step {
+            margin-bottom: 30px;
+        }
+        .warning {
+            background-color: #FFF3CD;
+            border-left: 4px solid #FFD700;
+            padding: 10px 15px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Food Tracker Project</h1>
+    
+    <p>Welcome to the Food Tracker project! This is a modern web application for tracking food intake for yourself and your loved ones, built with Next.js, Tailwind CSS, and Firebase.</p>
+    
+    <div class="card">
+        <h2>Getting Started</h2>
+        <p>Follow these steps to set up and run the project:</p>
+        
+        <div class="step">
+            <h3>Step 1: Make sure you have Node.js installed</h3>
+            <p>This project requires Node.js version 16.8.0 or later. If you don't have it installed, download it from <a href="https://nodejs.org/" target="_blank">nodejs.org</a>.</p>
+        </div>
+        
+        <div class="step">
+            <h3>Step 2: Install dependencies and run the project</h3>
+            <p>We've created several helper scripts to make it easier to install and run the project. Choose one of the following methods:</p>
+            
+            <div class="card">
+                <h4>Option A: Using the Command File (Windows)</h4>
+                <p>Double-click the <code>install_and_run.cmd</code> file in the project folder and follow the on-screen instructions.</p>
+                <a href="install_and_run.cmd" class="btn">Open Command File</a>
+            </div>
+            
+            <div class="card">
+                <h4>Option B: Using PowerShell with Admin Rights</h4>
+                <p>Right-click on <code>run_as_admin.ps1</code> and select "Run with PowerShell". Follow the on-screen prompts.</p>
+                <a href="run_as_admin.ps1" class="btn">Open PowerShell Script</a>
+            </div>
+            
+            <div class="card">
+                <h4>Option C: Manual Installation</h4>
+                <p>Open a command prompt or terminal in this directory and run:</p>
+                <code>npm install</code>
+                <p>After installation completes, run:</p>
+                <code>npm run dev</code>
+            </div>
+        </div>
+        
+        <div class="step">
+            <h3>Step 3: View the application</h3>
+            <p>After starting the development server, open your web browser and navigate to:</p>
+            <a href="http://localhost:3000" target="_blank" class="btn">http://localhost:3000</a>
+        </div>
+    </div>
+    
+    <div class="warning">
+        <strong>Note about Firebase:</strong> This project uses a mock Firebase service for local development. In a production environment, you would need to set up a real Firebase project and update the configuration in <code>services/firebase.ts</code>.
+    </div>
+    
+    <h2>Project Structure</h2>
+    <p>The project is organized as follows:</p>
+    <ul>
+        <li><code>/app</code>: Next.js App Router pages and layouts</li>
+        <li><code>/components</code>: Reusable React components</li>
+        <li><code>/services</code>: API and Firebase services</li>
+        <li><code>/public</code>: Static assets</li>
+    </ul>
+    
+    <h2>Need Help?</h2>
+    <p>If you encounter any issues, check out the troubleshooting section in the <a href="HOW_TO_RUN.html">How to Run guide</a>.</p>
+    
+    <p>Happy coding!</p>
+</body>
+</html> 
