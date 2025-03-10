@@ -437,11 +437,15 @@ export default function ConnectionDetailPage() {
                     </div>
                     
                     <div className="space-y-2">
-                      {entry.items.map((item, index) => (
-                        <div key={index} className="flex items-center">
-                          <span className="text-sm text-gray-600">{item}</span>
-                        </div>
-                      ))}
+                      {entry.items && entry.items.length > 0 ? (
+                        entry.items.map((item, index) => (
+                          <div key={index} className="flex items-center">
+                            <span className="text-sm text-gray-600">{item}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-gray-500">No items listed</p>
+                      )}
                     </div>
                   </div>
                 ))

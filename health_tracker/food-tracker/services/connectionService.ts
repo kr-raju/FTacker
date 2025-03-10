@@ -594,10 +594,22 @@ export const getConnectionTracking = async (connectionId: string, userId: string
     );
     
     const entriesSnapshot = await getDocs(entriesQuery);
-    const entries = entriesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })) as ConnectionTrackingData['entries'];
+    const entries = entriesSnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        userId: data.userId,
+        date: data.date,
+        name: data.name || 'Unnamed Meal',
+        time: data.time || 'No time specified',
+        calories: data.calories || 0,
+        items: data.items || [], // Ensure items is always an array
+        completed: data.completed || false,
+        protein: data.protein || 0,
+        carbs: data.carbs || 0,
+        fat: data.fat || 0
+      };
+    });
     
     console.log('Food entries:', entries);
     
@@ -623,8 +635,13 @@ export const getConnectionTracking = async (connectionId: string, userId: string
         id: targetUserId,
         email: userData.email,
         displayName: userData.displayName,
-        userInfo: userData.userInfo,
-        waterIntake: userData.waterIntake
+        userInfo: userData.userInfo || {
+          age: 0,
+          sex: 'Not specified',
+          weight: 0,
+          height: 0
+        },
+        waterIntake: userData.waterIntake || 0
       },
       entries,
       goals

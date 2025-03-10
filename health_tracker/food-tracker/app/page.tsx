@@ -1,8 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { getCurrentUser } from '../services/firebase'
 import Header from '../components/Header'
 
@@ -12,103 +11,120 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Check if user is logged in
-    const currentUser = getCurrentUser()
-    
-    if (!currentUser) {
-      // Redirect to login if not authenticated
-      router.push('/auth/login')
-      return
+    const checkAuth = async () => {
+      const currentUser = getCurrentUser()
+      if (!currentUser) {
+        router.push('/auth/login')
+        return
+      }
+      setUser(currentUser)
+      setLoading(false)
     }
-    
-    setUser(currentUser)
-    setLoading(false)
+    checkAuth()
   }, [router])
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-xl">Loading...</p>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-600"></div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Header />
-      
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Welcome to Food Tracker</h1>
-          <p className="text-xl text-gray-600">Track your meals and share with loved ones</p>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+      <Header 
+        user={user}
+        onSignOut={async () => {
+          await router.push('/auth/login')
+        }}
+        notifications={[]}
+        showNotifications={false}
+        setShowNotifications={() => {}}
+        onMarkNotificationAsRead={async () => {}}
+        onAcceptConnection={async () => {}}
+        onRejectConnection={async () => {}}
+      />
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        {/* Welcome Section */}
+        <div className="text-center mb-16">
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            Welcome back, {user?.displayName || 'User'}
+          </h1>
+          <p className="text-xl text-gray-600">
+            Track your nutrition journey with precision and style
+          </p>
         </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-          {/* My Food Tracking Option */}
-          <Link href="/dashboard" className="block">
-            <div className="apple-card hover:shadow-xl transition-shadow h-full flex flex-col">
-              <div className="flex-1 p-8 flex flex-col items-center text-center">
-                <div className="rounded-full bg-primary-100 p-4 mb-6">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
-                </div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">My Food Tracking</h2>
-                <p className="text-gray-600">View and manage your personal meal records, nutrition goals, and progress.</p>
-              </div>
-              <div className="bg-gray-50 px-6 py-4 rounded-b-xl">
-                <span className="text-primary-600 font-medium">Track my meals &rarr;</span>
-              </div>
-            </div>
-          </Link>
-          
-          {/* Track Others Option */}
-          <Link href="/connections" className="block">
-            <div className="apple-card hover:shadow-xl transition-shadow h-full flex flex-col">
-              <div className="flex-1 p-8 flex flex-col items-center text-center">
-                <div className="rounded-full bg-secondary-100 p-4 mb-6">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-secondary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                  </svg>
-                </div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Track Others</h2>
-                <p className="text-gray-600">Connect with family and friends to monitor their food intake and provide support.</p>
-              </div>
-              <div className="bg-gray-50 px-6 py-4 rounded-b-xl">
-                <span className="text-secondary-600 font-medium">View connections &rarr;</span>
-              </div>
-            </div>
-          </Link>
-        </div>
-        
+
         {/* Quick Stats */}
-        <div className="mt-16 max-w-4xl mx-auto">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">Quick Stats</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="apple-card p-6 text-center">
-              <p className="text-gray-600 text-sm">Today's Calories</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">650</p>
-              <p className="text-xs text-gray-500 mt-1">/ 2000 goal</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
+          <div className="bg-white rounded-2xl shadow-lg p-8 transform hover:scale-105 transition-transform duration-200">
+            <div className="text-primary-600 mb-4">
+              <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
             </div>
-            
-            <div className="apple-card p-6 text-center">
-              <p className="text-gray-600 text-sm">Water Intake</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">1.2L</p>
-              <p className="text-xs text-gray-500 mt-1">/ 2.5L goal</p>
-            </div>
-            
-            <div className="apple-card p-6 text-center">
-              <p className="text-gray-600 text-sm">Active Days</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">5</p>
-              <p className="text-xs text-gray-500 mt-1">Last 7 days</p>
-            </div>
-            
-            <div className="apple-card p-6 text-center">
-              <p className="text-gray-600 text-sm">Connections</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">3</p>
-              <p className="text-xs text-gray-500 mt-1">1 pending</p>
-            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Daily Progress</h3>
+            <p className="text-gray-600">Track your daily nutrition goals and achievements</p>
           </div>
+
+          <div className="bg-white rounded-2xl shadow-lg p-8 transform hover:scale-105 transition-transform duration-200">
+            <div className="text-primary-600 mb-4">
+              <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Connection Hub</h3>
+            <p className="text-gray-600">Connect and track progress with friends and family</p>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg p-8 transform hover:scale-105 transition-transform duration-200">
+            <div className="text-primary-600 mb-4">
+              <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Nutrition Insights</h3>
+            <p className="text-gray-600">Get detailed analytics and personalized recommendations</p>
+          </div>
+        </div>
+
+        {/* Main Actions */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="group relative bg-white rounded-2xl shadow-lg p-8 overflow-hidden hover:shadow-xl transition-shadow duration-200"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-primary-500 to-primary-600 opacity-0 group-hover:opacity-10 transition-opacity duration-200"></div>
+            <div className="relative">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">Your Progress</h2>
+              <p className="text-gray-600 mb-6">Track your daily nutrition, view insights, and achieve your goals</p>
+              <div className="flex items-center text-primary-600">
+                <span className="font-medium">View Dashboard</span>
+                <svg className="w-5 h-5 ml-2 transform group-hover:translate-x-1 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => router.push('/connections')}
+            className="group relative bg-white rounded-2xl shadow-lg p-8 overflow-hidden hover:shadow-xl transition-shadow duration-200"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-primary-500 to-primary-600 opacity-0 group-hover:opacity-10 transition-opacity duration-200"></div>
+            <div className="relative">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">Track Connections</h2>
+              <p className="text-gray-600 mb-6">Connect with friends, family, and track their nutrition journey</p>
+              <div className="flex items-center text-primary-600">
+                <span className="font-medium">View Connections</span>
+                <svg className="w-5 h-5 ml-2 transform group-hover:translate-x-1 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </div>
+          </button>
         </div>
       </main>
     </div>

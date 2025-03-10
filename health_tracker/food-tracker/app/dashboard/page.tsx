@@ -21,34 +21,213 @@ import {
 } from '../../services/foodService'
 import { getUserNotifications, markNotificationAsRead } from '../../services/notificationService'
 import { Timestamp } from 'firebase/firestore'
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
+import { db } from '../../services/firebase'
 
 // Food entry and meal tracking types
 type MealEntry = {
   id: string;
-  meal: string;
-  food: string;
+  userId: string;
+  date: Date;
+  name: string;
+  time: string;
   calories: number;
-  timestamp: string;
+  items: string[];
+  completed: boolean;
+  type: MealType;
+  description?: string;
+  waterIntake?: number;
+};
+
+type ViewType = 'day' | 'week' | 'month'
+
+// Add food calorie dictionary with proper type definition
+const foodCalorieDatabase: Record<string, number> = {
+  // Breakfast items
+  'toast': 75,
+  'bread': 75,
+  'egg': 70,
+  'boiled egg': 70,
+  'fried egg': 90,
+  'scrambled egg': 100,
+  'oatmeal': 150,
+  'cereal': 120,
+  'pancake': 90,
+  'waffle': 100,
+  'bacon': 45,
+  'sausage': 100,
+  'yogurt': 150,
+  'granola': 120,
+  'banana': 105,
+  'apple': 95,
+  'orange': 65,
+  'grapefruit': 50,
+  'avocado': 240,
+  'avocado toast': 190,
+  'bagel': 245,
+  'cream cheese': 100,
+  'butter': 100,
+  'jam': 55,
+  'peanut butter': 95,
+  'coffee': 5,
+  'coffee with milk': 30,
+  'coffee with sugar': 35,
+  'coffee with milk and sugar': 60,
+  'tea': 2,
+  'tea with milk': 27,
+  'tea with sugar': 32,
+  'tea with milk and sugar': 57,
+  'orange juice': 110,
+  'apple juice': 115,
+  
+  // Lunch items
+  'sandwich': 350,
+  'turkey sandwich': 320,
+  'ham sandwich': 330,
+  'chicken sandwich': 350,
+  'tuna sandwich': 290,
+  'grilled cheese': 400,
+  'blt': 450,
+  'wrap': 300,
+  'chicken wrap': 350,
+  'salad': 100,
+  'caesar salad': 230,
+  'greek salad': 180,
+  'chicken salad': 250,
+  'tuna salad': 190,
+  'soup': 150,
+  'tomato soup': 120,
+  'chicken soup': 130,
+  'vegetable soup': 80,
+  'burger': 550,
+  'cheeseburger': 630,
+  'veggie burger': 320,
+  'fries': 380,
+  'pizza slice': 285,
+  'pasta': 200,
+  'spaghetti': 220,
+  'mac and cheese': 350,
+  
+  // Dinner items
+  'steak': 450,
+  'chicken breast': 165,
+  'grilled chicken': 180,
+  'fried chicken': 320,
+  'fish': 200,
+  'salmon': 230,
+  'tilapia': 110,
+  'shrimp': 85,
+  'rice': 200,
+  'brown rice': 215,
+  'quinoa': 220,
+  'potato': 160,
+  'mashed potato': 240,
+  'sweet potato': 115,
+  'broccoli': 55,
+  'carrots': 50,
+  'green beans': 35,
+  'asparagus': 40,
+  'corn': 130,
+  'peas': 80,
+  
+  // Snacks
+  'chips': 150,
+  'popcorn': 120,
+  'pretzels': 110,
+  'nuts': 170,
+  'almonds': 165,
+  'peanuts': 160,
+  'cashews': 155,
+  'chocolate': 210,
+  'candy': 100,
+  'granola bar': 120,
+  'protein bar': 200,
+  'crackers': 80,
+  'cheese': 110,
+  'hummus': 70,
+  'guacamole': 50,
+  'salsa': 20,
+  
+  // Drinks
+  'water': 0,
+  'soda': 140,
+  'diet soda': 0,
+  'lemonade': 130,
+  'iced tea': 70,
+  'milk': 120,
+  'almond milk': 40,
+  'soy milk': 80,
+  'beer': 150,
+  'wine': 125,
+  'cocktail': 200,
+  'smoothie': 230,
+  'protein shake': 180
+};
+
+// Function to estimate calories based on food name
+const estimateCalories = (foodName: string): number => {
+  if (!foodName) return 0;
+  
+  const lowercaseName = foodName.toLowerCase().trim();
+  
+  // Direct match
+  if (foodCalorieDatabase[lowercaseName]) {
+    return foodCalorieDatabase[lowercaseName];
+  }
+  
+  // Partial match
+  for (const [food, calories] of Object.entries(foodCalorieDatabase)) {
+    if (lowercaseName.includes(food)) {
+      return calories;
+    }
+  }
+  
+  // Default calories by meal type
+  const defaultCalories: Record<MealType, number> = {
+    coffee: 100,
+    breakfast: 400,
+    lunch: 600,
+    snacks: 200,
+    dinner: 500,
+    custom: 300
+  };
+  
+  // If no match found, return default based on meal type
+  if (lowercaseName.includes('breakfast')) return defaultCalories.breakfast;
+  if (lowercaseName.includes('lunch')) return defaultCalories.lunch;
+  if (lowercaseName.includes('dinner')) return defaultCalories.dinner;
+  if (lowercaseName.includes('snack')) return defaultCalories.snacks;
+  if (lowercaseName.includes('coffee')) return defaultCalories.coffee;
+  
+  // If still no match, return a general estimate
+  return 200;
 };
 
 export default function DashboardPage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [view, setView] = useState<ViewType>('day')
   const [currentDate, setCurrentDate] = useState(new Date())
-  const [viewType, setViewType] = useState<'day' | 'week' | 'month'>('day')
-  const [mealEntries, setMealEntries] = useState<MealEntry[]>([])
   const [showAddMealModal, setShowAddMealModal] = useState(false)
   const [showAddConnectionModal, setShowAddConnectionModal] = useState(false)
-  const [selectedMeal, setSelectedMeal] = useState<string>('')
-  const [foodName, setFoodName] = useState('')
-  const [calories, setCalories] = useState('')
-  const [error, setError] = useState('')
+  const [selectedMealType, setSelectedMealType] = useState<MealType | null>(null)
+  const [mealEntries, setMealEntries] = useState<MealEntry[]>([])
+  const [newMealName, setNewMealName] = useState('')
+  const [newMealDescription, setNewMealDescription] = useState('')
+  const [newMealWaterIntake, setNewMealWaterIntake] = useState('')
+  const [customMealType, setCustomMealType] = useState('')
+  const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null)
   const [connections, setConnections] = useState<Connection[]>([])
   const [connectionEmail, setConnectionEmail] = useState('')
   const [connectionError, setConnectionError] = useState('')
-  const [notifications, setNotifications] = useState<any[]>([])
+  const [notifications, setNotifications] = useState<Notification[]>([])
   const [showNotifications, setShowNotifications] = useState(false)
+  
+  // New state variables for edit and delete functionality
+  const [editingMeal, setEditingMeal] = useState<MealEntry | null>(null)
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false)
+  const [mealToDelete, setMealToDelete] = useState<string | null>(null)
   
   // Get user data, connections, and notifications on page load
   useEffect(() => {
@@ -73,7 +252,7 @@ export default function DashboardPage() {
         setNotifications(userNotifications)
         
         // Load meal entries for current date
-        await loadFoodEntries(currentUser.uid, currentDate)
+        await loadMealEntries(currentUser.uid)
       } catch (error) {
         console.error('Error loading data:', error)
       } finally {
@@ -84,28 +263,30 @@ export default function DashboardPage() {
     checkAuth()
   }, [router, currentDate])
   
-  // Load food entries from Firestore
-  const loadFoodEntries = async (userId: string, date: Date) => {
+  const loadMealEntries = async (userId: string) => {
     try {
-      const entries = await getFoodEntriesByDate(userId, date)
-      
-      // Convert to MealEntry format for rendering
-      const formattedEntries = entries.map((entry: any) => ({
-        id: entry.id || '',
-        meal: entry.mealType,
-        food: entry.name,
-        calories: entry.calories,
-        timestamp: entry.date instanceof Date 
-          ? entry.date.toISOString() 
-          : typeof entry.date === 'object' && entry.date.seconds
-            ? new Date(entry.date.seconds * 1000).toISOString()
-            : new Date(entry.date).toISOString()
-      }))
-      
-      setMealEntries(formattedEntries)
+      const startOfDay = new Date(currentDate)
+      startOfDay.setHours(0, 0, 0, 0)
+      const endOfDay = new Date(startOfDay)
+      endOfDay.setDate(endOfDay.getDate() + 1)
+
+      const q = query(
+        collection(db, 'food_entries'),
+        where('userId', '==', userId),
+        where('date', '>=', startOfDay),
+        where('date', '<', endOfDay)
+      )
+
+      const querySnapshot = await getDocs(q)
+      const entries = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        date: doc.data().date.toDate()
+      })) as MealEntry[]
+
+      setMealEntries(entries)
     } catch (error) {
-      console.error('Error loading food entries:', error)
-      setMealEntries([])
+      console.error('Error loading meal entries:', error)
     }
   }
   
@@ -123,62 +304,105 @@ export default function DashboardPage() {
     setCurrentDate(newDate)
   }
   
-  const openAddMealModal = (meal: string) => {
-    setSelectedMeal(meal)
-    resetMealForm()
-    setShowAddMealModal(true)
-  }
-  
-  const closeAddMealModal = () => {
-    setShowAddMealModal(false)
-    resetMealForm()
-  }
-  
-  const resetMealForm = () => {
-    setFoodName('')
-    setCalories('')
-    setError('')
-  }
-  
-  const handleAddMeal = async () => {
-    // Validate inputs
-    if (!foodName.trim() || !calories.trim() || !selectedMeal) {
-      setError('Please fill in all fields')
-      return
+  // Function to handle editing a meal
+  const handleEditMeal = (meal: MealEntry) => {
+    setEditingMeal(meal);
+    setSelectedMealType(meal.type);
+    setNewMealName(meal.name);
+    setNewMealDescription(meal.description || '');
+    setNewMealWaterIntake(meal.waterIntake?.toString() || '');
+    if (meal.type === 'custom') {
+      setCustomMealType(meal.name);
     }
-    
-    const caloriesValue = parseInt(calories)
-    if (isNaN(caloriesValue) || caloriesValue <= 0) {
-      setError('Please enter a valid calorie amount')
-      return
-    }
+    setShowAddMealModal(true);
+  };
+
+  // Function to handle deleting a meal
+  const handleDeleteMeal = async () => {
+    if (!mealToDelete || !user) return;
     
     try {
-      if (!user) return
+      // Delete the meal from Firestore
+      await deleteDoc(doc(db, 'food_entries', mealToDelete));
       
-      // Create new entry in Firestore
-      const newEntry: Omit<FoodEntry, 'id' | 'createdAt' | 'updatedAt'> = {
-        userId: user.uid,
-        name: foodName,
-        description: '',
-        mealType: selectedMeal as MealType,
-        calories: caloriesValue,
-        date: currentDate,
-        time: new Date().toLocaleTimeString(),
+      // Refresh the meal entries
+      await loadMealEntries(user.uid);
+      
+      // Close the confirmation dialog
+      setShowDeleteConfirmation(false);
+      setMealToDelete(null);
+    } catch (error) {
+      console.error('Error deleting meal:', error);
+    }
+  };
+
+  // Function to confirm deletion
+  const confirmDeleteMeal = (mealId: string) => {
+    setMealToDelete(mealId);
+    setShowDeleteConfirmation(true);
+  };
+
+  // Modified handleAddMeal to support editing
+  const handleAddMeal = async () => {
+    if (!user || !selectedMealType) return;
+
+    try {
+      const mealType = selectedMealType === 'custom' ? customMealType : selectedMealType;
+      const itemName = newMealName || mealType;
+      
+      // Calculate calories based on food name
+      let calculatedCalories = estimateCalories(itemName);
+      
+      // If there's a description, check if it contains food items to add calories
+      if (newMealDescription) {
+        const words = newMealDescription.split(' ');
+        for (const word of words) {
+          const wordCalories = estimateCalories(word);
+          if (wordCalories > 0) {
+            calculatedCalories += wordCalories;
+          }
+        }
       }
       
-      await addFoodEntry(newEntry)
+      const mealData: Omit<MealEntry, 'id'> = {
+        userId: user.uid,
+        date: currentDate,
+        name: itemName,
+        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        calories: calculatedCalories,
+        items: itemName ? [itemName] : [],
+        completed: true,
+        type: selectedMealType as MealType,
+        description: newMealDescription || undefined,
+        waterIntake: newMealWaterIntake ? parseInt(newMealWaterIntake) : undefined
+      };
+
+      if (editingMeal) {
+        // Update existing meal
+        await updateDoc(doc(db, 'food_entries', editingMeal.id), mealData);
+        setEditingMeal(null);
+      } else {
+        // Add new meal
+        await addDoc(collection(db, 'food_entries'), mealData);
+      }
       
-      // Refresh entries
-      await loadFoodEntries(user.uid, currentDate)
-      
-      // Close modal and reset form
-      closeAddMealModal()
+      loadMealEntries(user.uid);
+      setShowAddMealModal(false);
+      resetForm();
     } catch (error) {
-      console.error('Error adding meal:', error)
-      setError('Failed to add meal. Please try again.')
+      console.error('Error adding/updating meal:', error);
     }
-  }
+  };
+
+  // Modified resetForm to clear editing state
+  const resetForm = () => {
+    setSelectedMealType(null);
+    setNewMealName('');
+    setNewMealDescription('');
+    setNewMealWaterIntake('');
+    setCustomMealType('');
+    setEditingMeal(null);
+  };
   
   const openAddConnectionModal = () => {
     setConnectionEmail('')
@@ -186,34 +410,8 @@ export default function DashboardPage() {
     setShowAddConnectionModal(true)
   }
   
-  const closeAddConnectionModal = () => {
-    setShowAddConnectionModal(false)
-  }
-  
-  const handleAddConnection = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setConnectionError('')
-    
-    try {
-      if (!user) throw new Error('No user found')
-      
-      await createConnectionRequest(
-        user.uid,
-        user.email,
-        user.displayName || user.email.split('@')[0],
-        connectionEmail
-      )
-      
-      // Refresh connections
-      const updatedConnections = await getUserConnections(user.uid)
-      setConnections(updatedConnections as Connection[])
-      
-      // Close modal and reset form
-      setShowAddConnectionModal(false)
-      setConnectionEmail('')
-    } catch (error: any) {
-      setConnectionError(error.message || 'Failed to send connection request')
-    }
+  const closeAddMealModal = () => {
+    setShowAddMealModal(false)
   }
   
   // Handle accepting a connection request
@@ -221,7 +419,7 @@ export default function DashboardPage() {
     try {
       if (!user) throw new Error('No user found')
       
-      await acceptConnection(connectionId)
+      await acceptConnection(connectionId, user.uid)
       
       // Refresh connections
       const updatedConnections = await getUserConnections(user.uid)
@@ -351,7 +549,7 @@ export default function DashboardPage() {
       }
       
       // Refresh entries
-      await loadFoodEntries(user.uid, currentDate)
+      await loadMealEntries(user.uid)
       
       alert("Sample data imported successfully!")
     } catch (error) {
@@ -379,6 +577,167 @@ export default function DashboardPage() {
     }
   }
   
+  const renderCalendarView = () => {
+    const today = new Date()
+    const startDate = new Date(currentDate)
+    startDate.setDate(1) // Start from first day of month
+    const endDate = new Date(startDate)
+    endDate.setMonth(endDate.getMonth() + 1)
+    endDate.setDate(0) // Last day of month
+
+    const days = []
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      days.push(new Date(d))
+    }
+
+    return (
+      <div className="grid grid-cols-7 gap-2">
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+          <div key={day} className="text-center font-medium text-gray-500 py-2">
+            {day}
+          </div>
+        ))}
+        {days.map((date, index) => {
+          const hasEntries = mealEntries.some(entry => 
+            entry.date.toDateString() === date.toDateString()
+          )
+          const isToday = date.toDateString() === today.toDateString()
+          const isPast = date < today
+          const isFuture = date > today
+
+          return (
+            <button
+              key={index}
+              onClick={() => {
+                setCurrentDate(date)
+                setView('day')
+              }}
+              className={`
+                p-2 rounded-lg text-center
+                ${hasEntries ? 'bg-green-100 text-green-800' : ''}
+                ${isToday ? 'border-2 border-primary-600' : ''}
+                ${isPast ? 'bg-gray-50 text-gray-400' : ''}
+                ${isFuture ? 'bg-blue-50 text-blue-600' : ''}
+                hover:bg-gray-100 transition-colors
+              `}
+            >
+              <div className="text-sm font-medium">{date.getDate()}</div>
+              {hasEntries && (
+                <div className="text-xs mt-1">
+                  {mealEntries
+                    .filter(entry => entry.date.toDateString() === date.toDateString())
+                    .reduce((sum, entry) => sum + entry.calories, 0)} cal
+                </div>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+  
+  const handleMealButtonClick = (type: MealType) => {
+    // For quick click, just record the meal with default values
+    if (!user) return;
+    
+    const defaultCalories: Record<MealType, number> = {
+      coffee: 100,
+      breakfast: 400,
+      lunch: 600,
+      snacks: 200,
+      dinner: 500,
+      custom: 300
+    };
+    
+    const mealName = type === 'custom' ? 'Custom Meal' : type.charAt(0).toUpperCase() + type.slice(1);
+    
+    const entry: Omit<MealEntry, 'id'> = {
+      userId: user.uid,
+      date: currentDate,
+      name: mealName,
+      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      calories: defaultCalories[type],
+      items: [mealName],
+      completed: true,
+      type: type,
+      description: `Quick ${type} entry`,
+    };
+    
+    addDoc(collection(db, 'food_entries'), entry)
+      .then(() => {
+        loadMealEntries(user.uid);
+      })
+      .catch(error => {
+        console.error('Error adding quick meal:', error);
+      });
+  };
+  
+  const handleMealButtonMouseDown = (type: MealType) => {
+    // Start timer for long press
+    const timer = setTimeout(() => {
+      setSelectedMealType(type);
+      setShowAddMealModal(true);
+      setLongPressTimer(null);
+    }, 500); // 500ms for long press
+    
+    setLongPressTimer(timer);
+  };
+  
+  const handleMealButtonMouseUp = (type: MealType) => {
+    // If timer exists, it was a short press
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      setLongPressTimer(null);
+      handleMealButtonClick(type);
+    }
+  };
+  
+  const handleMealButtonTouchStart = (type: MealType) => {
+    // Start timer for long press on touch devices
+    const timer = setTimeout(() => {
+      setSelectedMealType(type);
+      setShowAddMealModal(true);
+      setLongPressTimer(null);
+    }, 500); // 500ms for long press
+    
+    setLongPressTimer(timer);
+  };
+  
+  const handleMealButtonTouchEnd = (type: MealType) => {
+    // If timer exists, it was a short press
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      setLongPressTimer(null);
+      handleMealButtonClick(type);
+    }
+  };
+
+  const handleAddConnection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setConnectionError('');
+    
+    try {
+      if (!user) throw new Error('No user found');
+      
+      await createConnectionRequest(
+        user.uid,
+        user.email,
+        user.displayName || user.email.split('@')[0],
+        connectionEmail
+      );
+      
+      // Refresh connections
+      const updatedConnections = await getUserConnections(user.uid);
+      setConnections(updatedConnections as Connection[]);
+      
+      // Close modal and reset form
+      setShowAddConnectionModal(false);
+      setConnectionEmail('');
+    } catch (error: any) {
+      setConnectionError(error.message || 'Failed to send connection request');
+    }
+  };
+  
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -401,408 +760,248 @@ export default function DashboardPage() {
       />
       
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Date Navigation */}
-        <div className="mb-8 flex items-center justify-between">
-          <button onClick={() => moveDate(-1)} className="p-2">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <h2 className="text-2xl font-bold">{formatDate(currentDate)}</h2>
-          <button onClick={() => moveDate(1)} className="p-2">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        </div>
-        
-        {/* View Selector */}
-        <div className="mb-8 flex justify-center">
-          <div className="segmented-control">
-            <button 
-              className={`segmented-control-option ${viewType === 'day' ? 'segmented-control-option-active' : ''}`}
-              onClick={() => setViewType('day')}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Date Navigation and View Selector */}
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => moveDate(-1)}
+              className="p-2 rounded-full hover:bg-gray-100"
+            >
+              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <h2 className="text-2xl font-bold text-gray-900">
+              {currentDate.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })}
+            </h2>
+            <button
+              onClick={() => moveDate(1)}
+              className="p-2 rounded-full hover:bg-gray-100"
+            >
+              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="flex items-center space-x-2 bg-white rounded-lg shadow-sm p-1">
+            <button
+              onClick={() => setView('day')}
+              className={`px-4 py-2 rounded-md ${
+                view === 'day' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+              }`}
             >
               Day
             </button>
-            <button 
-              className={`segmented-control-option ${viewType === 'week' ? 'segmented-control-option-active' : ''}`}
-              onClick={() => setViewType('week')}
+            <button
+              onClick={() => setView('week')}
+              className={`px-4 py-2 rounded-md ${
+                view === 'week' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+              }`}
             >
               Week
             </button>
-            <button 
-              className={`segmented-control-option ${viewType === 'month' ? 'segmented-control-option-active' : ''}`}
-              onClick={() => setViewType('month')}
+            <button
+              onClick={() => setView('month')}
+              className={`px-4 py-2 rounded-md ${
+                view === 'month' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+              }`}
             >
               Month
             </button>
           </div>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {/* Left Column - Nutrition Summary */}
-          <div className="md:col-span-1">
-            <div className="apple-card mb-8">
-              <h2 className="text-xl font-bold mb-6">Today's Summary</h2>
-              
-              {/* Calories Progress */}
-              <div className="mb-6">
-                <div className="flex justify-between mb-2">
-                  <span className="text-gray-700">Calories</span>
-                  <span className="font-medium">
-                    {totalCalories}
-                  </span>
+        {/* Calendar View */}
+        {(view === 'week' || view === 'month') && (
+          <div className="bg-white rounded-lg shadow p-6 mb-8">
+            {renderCalendarView()}
+          </div>
+        )}
+        
+        {/* Meal Type Buttons */}
+        {view === 'day' && (
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
+            {['coffee', 'breakfast', 'lunch', 'snacks', 'dinner', 'custom'].map((type) => (
+              <button
+                key={type}
+                onMouseDown={() => handleMealButtonMouseDown(type as MealType)}
+                onMouseUp={() => handleMealButtonMouseUp(type as MealType)}
+                onMouseLeave={() => {
+                  if (longPressTimer) {
+                    clearTimeout(longPressTimer);
+                    setLongPressTimer(null);
+                  }
+                }}
+                onTouchStart={() => handleMealButtonTouchStart(type as MealType)}
+                onTouchEnd={() => handleMealButtonTouchEnd(type as MealType)}
+                className={`p-4 rounded-lg text-white font-medium capitalize ${
+                  mealEntries.some(entry => entry.type === type)
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-red-600 hover:bg-red-700'
+                }`}
+              >
+                {type}
+                <div className="text-xs mt-1">
+                  {mealEntries.some(entry => entry.type === type) && 
+                    `${mealEntries.filter(entry => entry.type === type).reduce((sum, entry) => sum + entry.calories, 0)} cal`
+                  }
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2.5">
-                  <div 
-                    className="bg-primary-600 h-2.5 rounded-full" 
-                    style={{ width: `${(totalCalories / 2000) * 100}%` }}
-                  ></div>
-                </div>
-                <div className="mt-1 text-sm text-gray-500">
-                  {2000 - totalCalories} calories remaining
-                </div>
-              </div>
-              
-              {/* Macros */}
-              <div>
-                <h3 className="font-medium text-gray-900 mb-2">Macronutrients</h3>
-                
-                {/* Protein */}
-                <div className="mb-3">
-                  <div className="flex justify-between mb-1">
-                    <span className="text-sm text-gray-700">Protein</span>
-                    <span className="text-sm font-medium">
-                      {Math.round((totalCalories * 0.35) / 4)}g
-                    </span>
+              </button>
+            ))}
+          </div>
+        )}
+        
+        {/* Meal Entries */}
+        {view === 'day' && (
+          <div className="space-y-4">
+            {mealEntries.map((entry) => (
+              <div
+                key={entry.id}
+                className="bg-white rounded-lg shadow p-6"
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-900">{entry.name}</h3>
+                    <p className="text-sm text-gray-500">{entry.time}</p>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-1.5">
-                    <div 
-                      className="bg-green-500 h-1.5 rounded-full" 
-                      style={{ width: `${(Math.round((totalCalories * 0.35) / 4) / 120) * 100}%` }}
-                    ></div>
-                  </div>
-                </div>
-                
-                {/* Carbs */}
-                <div className="mb-3">
-                  <div className="flex justify-between mb-1">
-                    <span className="text-sm text-gray-700">Carbs</span>
-                    <span className="text-sm font-medium">
-                      {Math.round((totalCalories * 0.55) / 4)}g
-                    </span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-1.5">
-                    <div 
-                      className="bg-blue-500 h-1.5 rounded-full" 
-                      style={{ width: `${(Math.round((totalCalories * 0.55) / 4) / 200) * 100}%` }}
-                    ></div>
-                  </div>
-                </div>
-                
-                {/* Fat */}
-                <div className="mb-6">
-                  <div className="flex justify-between mb-1">
-                    <span className="text-sm text-gray-700">Fat</span>
-                    <span className="text-sm font-medium">
-                      {Math.round((totalCalories * 0.2) / 9)}g
-                    </span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-1.5">
-                    <div 
-                      className="bg-yellow-500 h-1.5 rounded-full" 
-                      style={{ width: `${(Math.round((totalCalories * 0.2) / 9) / 65) * 100}%` }}
-                    ></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            {/* Track Others Section */}
-            <div className="apple-card">
-              <h2 className="text-xl font-bold mb-6">Track Others</h2>
-              
-              {acceptedConnections.length === 0 ? (
-                <div className="text-center py-6">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                  </svg>
-                  <h3 className="mt-2 text-gray-500">No connections yet</h3>
-                  <p className="text-sm text-gray-400 mb-4">Track friends and family members</p>
-                  <button 
-                    onClick={openAddConnectionModal}
-                    className="mt-2 bg-primary-600 text-white px-4 py-2 rounded-full text-sm"
-                  >
-                    + Track Others
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {acceptedConnections.slice(0, 3).map(connection => (
-                    <div key={connection.id} className="border-b border-gray-100 last:border-0 pb-3 last:pb-0">
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <h3 className="font-medium text-gray-900">
-                            {user.email === connection.senderEmail 
-                              ? connection.receiverName 
-                              : connection.senderName}
-                          </h3>
-                          <p className="text-xs text-gray-500">
-                            Updated {formatLastUpdate(connection.updatedAt || connection.createdAt)}
-                          </p>
-                        </div>
-                        <button 
-                          onClick={() => handleViewTracking(connection.id || '')}
-                          className="text-xs bg-gray-100 text-gray-800 px-3 py-1 rounded-full"
-                        >
-                          View Tracking
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-500">
-                      Total connections: {acceptedConnections.length}
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium text-gray-900 mr-4">
+                      {entry.calories} kcal
                     </span>
                     <button 
-                      onClick={openAddConnectionModal}
-                      className="text-xs bg-primary-100 text-primary-800 px-3 py-1 rounded-full flex items-center"
+                      onClick={() => handleEditMeal(entry)}
+                      className="p-2 text-blue-600 hover:text-blue-800 transition-colors"
+                      aria-label="Edit meal"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
-                      New
+                    </button>
+                    <button 
+                      onClick={() => confirmDeleteMeal(entry.id)}
+                      className="p-2 text-red-600 hover:text-red-800 transition-colors"
+                      aria-label="Delete meal"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
                     </button>
                   </div>
-                  
-                  {acceptedConnections.length > 3 && (
-                    <div className="text-center pt-2">
-                      <Link href="/connections" className="text-sm text-primary-600 hover:text-primary-800">
-                        View all connections
-                      </Link>
-                    </div>
-                  )}
-                  
-                  {pendingRequests.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-gray-100">
-                      <div className="flex justify-between items-center mb-2">
-                        <h3 className="font-medium text-gray-900">Pending Requests</h3>
-                        <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
-                          {pendingRequests.length}
-                        </span>
-                      </div>
-                      <Link href="/connections" className="text-sm text-primary-600 hover:text-primary-800">
-                        Manage requests
-                      </Link>
-                    </div>
-                  )}
                 </div>
-              )}
-            </div>
+                {entry.description && (
+                  <p className="mt-2 text-sm text-gray-600">{entry.description}</p>
+                )}
+                {entry.waterIntake && (
+                  <p className="mt-2 text-sm text-blue-600">
+                    Water: {entry.waterIntake}ml
+                  </p>
+                )}
+              </div>
+            ))}
           </div>
-          
-          {/* Middle & Right Column - Meals & Food Tracking */}
-          <div className="md:col-span-2">
-            <div className="apple-card">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold">Today's Meals</h2>
-                <button 
-                  className="text-sm text-primary-600 hover:text-primary-800 flex items-center"
-                  onClick={() => openAddMealModal('custom')}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
-                  </svg>
-                  Add Custom Meal
-                </button>
-              </div>
-              
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-sm text-gray-500">Add your meals throughout the day</span>
-                <button 
-                  className="text-xs bg-primary-100 text-primary-800 px-3 py-2 rounded-full flex items-center"
-                  onClick={importSampleData}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                  Import Sample Data
-                </button>
-              </div>
-              
-              <div className="space-y-4">
-                {/* Breakfast */}
-                <div>
-                  <button 
-                    onClick={() => openAddMealModal('breakfast')}
-                    className={`meal-button ${mealEntries.some(entry => entry.meal === 'breakfast') ? 'meal-button-completed' : 'meal-button-default'}`}
-                  >
-                    <span>Breakfast</span>
-                    {mealEntries.some(entry => entry.meal === 'breakfast') && (
-                      <span>{mealEntries.filter(entry => entry.meal === 'breakfast').reduce((sum, entry) => sum + entry.calories, 0)} cal</span>
-                    )}
-                  </button>
-                  
-                  {mealEntries.some(entry => entry.meal === 'breakfast') && (
-                    <div className="mt-2 pl-4 border-l-2 border-green-500">
-                      <div className="text-sm text-gray-500">
-                        {new Date(mealEntries.find(entry => entry.meal === 'breakfast')?.timestamp || '').toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                      </div>
-                      <div className="mt-1">
-                        {mealEntries.filter(entry => entry.meal === 'breakfast').map((entry, index) => (
-                          <div key={index} className="text-gray-800">{entry.food}</div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Lunch */}
-                <div>
-                  <button 
-                    onClick={() => openAddMealModal('lunch')}
-                    className={`meal-button ${mealEntries.some(entry => entry.meal === 'lunch') ? 'meal-button-completed' : 'meal-button-default'}`}
-                  >
-                    <span>Lunch</span>
-                    {mealEntries.some(entry => entry.meal === 'lunch') && (
-                      <span>{mealEntries.filter(entry => entry.meal === 'lunch').reduce((sum, entry) => sum + entry.calories, 0)} cal</span>
-                    )}
-                  </button>
-                  
-                  {mealEntries.some(entry => entry.meal === 'lunch') && (
-                    <div className="mt-2 pl-4 border-l-2 border-green-500">
-                      <div className="text-sm text-gray-500">
-                        {new Date(mealEntries.find(entry => entry.meal === 'lunch')?.timestamp || '').toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                      </div>
-                      <div className="mt-1">
-                        {mealEntries.filter(entry => entry.meal === 'lunch').map((entry, index) => (
-                          <div key={index} className="text-gray-800">{entry.food}</div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Dinner */}
-                <div>
-                  <button 
-                    onClick={() => openAddMealModal('dinner')}
-                    className={`meal-button ${mealEntries.some(entry => entry.meal === 'dinner') ? 'meal-button-completed' : 'meal-button-default'}`}
-                  >
-                    <span>Dinner</span>
-                    {mealEntries.some(entry => entry.meal === 'dinner') && (
-                      <span>{mealEntries.filter(entry => entry.meal === 'dinner').reduce((sum, entry) => sum + entry.calories, 0)} cal</span>
-                    )}
-                  </button>
-                  
-                  {mealEntries.some(entry => entry.meal === 'dinner') && (
-                    <div className="mt-2 pl-4 border-l-2 border-green-500">
-                      <div className="text-sm text-gray-500">
-                        {new Date(mealEntries.find(entry => entry.meal === 'dinner')?.timestamp || '').toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                      </div>
-                      <div className="mt-1">
-                        {mealEntries.filter(entry => entry.meal === 'dinner').map((entry, index) => (
-                          <div key={index} className="text-gray-800">{entry.food}</div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Snacks */}
-                <div>
-                  <button 
-                    onClick={() => openAddMealModal('snacks')}
-                    className={`meal-button ${mealEntries.some(entry => entry.meal === 'snacks') ? 'meal-button-completed' : 'meal-button-default'}`}
-                  >
-                    <span>Snacks</span>
-                    {mealEntries.some(entry => entry.meal === 'snacks') && (
-                      <span>{mealEntries.filter(entry => entry.meal === 'snacks').reduce((sum, entry) => sum + entry.calories, 0)} cal</span>
-                    )}
-                  </button>
-                  
-                  {mealEntries.some(entry => entry.meal === 'snacks') && (
-                    <div className="mt-2 pl-4 border-l-2 border-green-500">
-                      <div className="text-sm text-gray-500">
-                        {new Date(mealEntries.find(entry => entry.meal === 'snacks')?.timestamp || '').toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                      </div>
-                      <div className="mt-1">
-                        {mealEntries.filter(entry => entry.meal === 'snacks').map((entry, index) => (
-                          <div key={index} className="text-gray-800">{entry.food}</div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        )}
       </main>
       
       {/* Add Meal Modal */}
-      {showAddMealModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900">
-                Add {selectedMeal && selectedMeal.charAt(0).toUpperCase() + selectedMeal.slice(1)}
+      {showAddMealModal && selectedMealType && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-medium text-gray-900">
+                {editingMeal ? 'Edit' : 'Add'} {selectedMealType === 'custom' ? 'Custom' : selectedMealType.charAt(0).toUpperCase() + selectedMealType.slice(1)} Meal
               </h3>
-              <button onClick={closeAddMealModal} className="text-gray-400 hover:text-gray-500">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <button 
+                onClick={() => {
+                  setShowAddMealModal(false);
+                  resetForm();
+                }}
+                className="text-gray-400 hover:text-gray-500"
+              >
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
             
-            {error && (
-              <div className="mb-4 p-3 bg-red-100 border border-red-200 text-red-700 rounded-lg text-sm">
-                {error}
+            {selectedMealType === 'custom' && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Meal Name
+                </label>
+                <input
+                  type="text"
+                  value={customMealType}
+                  onChange={(e) => setCustomMealType(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900"
+                  placeholder="Enter meal name"
+                />
               </div>
             )}
-            
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="foodName" className="block text-sm font-medium text-gray-700 mb-1">
-                  Food Item
-                </label>
-                <input
-                  id="foodName"
-                  type="text"
-                  className="apple-input"
-                  value={foodName}
-                  onChange={(e) => setFoodName(e.target.value)}
-                  placeholder="e.g. Chicken Sandwich"
-                  required
-                />
-              </div>
-              
-              <div>
-                <label htmlFor="calories" className="block text-sm font-medium text-gray-700 mb-1">
-                  Calories
-                </label>
-                <input
-                  id="calories"
-                  type="number"
-                  className="apple-input"
-                  value={calories}
-                  onChange={(e) => setCalories(e.target.value)}
-                  placeholder="e.g. 450"
-                  required
-                />
-              </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Item Name
+              </label>
+              <input
+                type="text"
+                value={newMealName}
+                onChange={(e) => setNewMealName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900"
+                placeholder="Enter item name (e.g. Chicken Sandwich)"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Calories will be calculated based on the food item
+              </p>
             </div>
-            
-            <div className="mt-6">
-              <button 
-                className="apple-btn w-full"
-                onClick={handleAddMeal}
-                disabled={!foodName || !calories || !selectedMeal}
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description
+              </label>
+              <textarea
+                value={newMealDescription}
+                onChange={(e) => setNewMealDescription(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900"
+                rows={3}
+                placeholder="Enter description or additional items"
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Water/Juice Intake (ml)
+              </label>
+              <input
+                type="number"
+                value={newMealWaterIntake}
+                onChange={(e) => setNewMealWaterIntake(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900"
+                placeholder="Enter water/juice intake"
+              />
+            </div>
+
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setShowAddMealModal(false);
+                  resetForm();
+                }}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
               >
-                Save
+                Cancel
+              </button>
+              <button
+                onClick={handleAddMeal}
+                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
+              >
+                {editingMeal ? 'Update' : 'Add'} Meal
               </button>
             </div>
           </div>
@@ -811,51 +1010,83 @@ export default function DashboardPage() {
       
       {/* Add Connection Modal */}
       {showAddConnectionModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900">Add New Connection</h3>
-              <button onClick={closeAddConnectionModal} className="text-gray-400 hover:text-gray-500">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Add New Connection</h3>
+              <button 
+                onClick={() => setShowAddConnectionModal(false)}
+                className="text-gray-400 hover:text-gray-500"
+              >
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
             
             {connectionError && (
-              <div className="mb-4 p-3 bg-red-100 border border-red-200 text-red-700 rounded-lg text-sm">
+              <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md">
                 {connectionError}
               </div>
             )}
             
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="connectionEmail" className="block text-sm font-medium text-gray-700 mb-1">
-                  Email
+            <form onSubmit={handleAddConnection}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email Address
                 </label>
                 <input
-                  id="connectionEmail"
                   type="email"
-                  className="apple-input"
                   value={connectionEmail}
                   onChange={(e) => setConnectionEmail(e.target.value)}
-                  placeholder="Enter their email address"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Enter email address"
+                  required
                 />
               </div>
-            </div>
-            
-            <div className="mt-6 flex justify-end space-x-3">
-              <button 
-                onClick={closeAddConnectionModal}
-                className="btn-outline"
+              
+              <div className="flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddConnectionModal(false)}
+                  className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
+                >
+                  Send Request
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">
+              Delete Meal
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete this meal? This action cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowDeleteConfirmation(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
               >
                 Cancel
               </button>
-              <button 
-                onClick={handleAddConnection}
-                className="apple-btn"
+              <button
+                onClick={handleDeleteMeal}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
               >
-                Send Request
+                Delete
               </button>
             </div>
           </div>
