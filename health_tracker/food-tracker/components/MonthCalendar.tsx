@@ -5,12 +5,14 @@ type MonthCalendarProps = {
   currentDate: Date;
   mealEntries: MealEntry[];
   onSelectDate: (date: Date) => void;
+  onNavigateMonth: (direction: number) => void;
 };
 
 const MonthCalendar: React.FC<MonthCalendarProps> = ({
   currentDate,
   mealEntries,
-  onSelectDate
+  onSelectDate,
+  onNavigateMonth
 }) => {
   const today = new Date();
   const startDate = new Date(currentDate);
@@ -37,9 +39,31 @@ const MonthCalendar: React.FC<MonthCalendarProps> = ({
 
   return (
     <div className="bg-white rounded-lg shadow p-6 mb-8">
-      <h3 className="text-lg font-semibold text-gray-800 mb-4">
-        {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-      </h3>
+      <div className="flex items-center justify-between mb-4">
+        <button 
+          onClick={() => onNavigateMonth(-1)}
+          className="p-2 rounded-full hover:bg-gray-100"
+          aria-label="Previous month"
+        >
+          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        
+        <h3 className="text-lg font-semibold text-gray-800">
+          {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+        </h3>
+        
+        <button 
+          onClick={() => onNavigateMonth(1)}
+          className="p-2 rounded-full hover:bg-gray-100"
+          aria-label="Next month"
+        >
+          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
       
       <div className="grid grid-cols-7 gap-2">
         {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (

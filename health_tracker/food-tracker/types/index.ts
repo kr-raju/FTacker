@@ -1,4 +1,6 @@
-import { MealType } from '../services/foodService';
+import { MealType as FoodServiceMealType } from '../services/foodService';
+
+export type MealType = FoodServiceMealType;
 
 export type MealEntry = {
   id: string;
@@ -14,6 +16,8 @@ export type MealEntry = {
   waterIntake?: number;
   count?: number; // Number of times this meal has been added
   lastUpdated?: Date; // Timestamp of last update
+  imageId?: string; // Reference to the food image
+  isFromImage?: boolean; // Flag to indicate if entry was created from an image
 };
 
 export type FoodSuggestion = {

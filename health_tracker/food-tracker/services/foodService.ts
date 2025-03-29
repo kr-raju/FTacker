@@ -15,21 +15,25 @@ import {
 } from 'firebase/firestore';
 
 // Types
-export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | string;
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snacks' | 'coffee' | 'custom';
 
-export type FoodEntry = {
+export interface FoodEntry {
   id?: string;
   userId: string;
   name: string;
-  description?: string;
-  mealType: MealType;
   calories: number;
-  date: Timestamp | Date;
+  date: Date;
   time: string;
-  createdAt?: any;
-  updatedAt?: any;
-  // Additional nutritional info could be added here
-};
+  type: MealType;
+  completed: boolean;
+  description?: string;
+  waterIntake?: number;
+  items?: string[];
+  count?: number;
+  lastUpdated?: Date;
+  imageId?: string; // Reference to the food image
+  isFromImage?: boolean; // Flag to indicate if entry was created from an image
+}
 
 /**
  * Adds a new food entry
@@ -59,34 +63,48 @@ export const addFoodEntry = async (foodEntry: Omit<FoodEntry, 'id' | 'createdAt'
 };
 
 /**
- * Gets food entries for a specific date
+ * Gets food entries for a specific date range
  */
-export const getFoodEntriesByDate = async (userId: string, date: Date) => {
+export const getFoodEntriesByDate = async (
+  userId: string,
+  startDate: Date,
+  endDate: Date
+): Promise<FoodEntry[]> => {
   try {
-    // Convert date to start/end of day for query
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-    
-    // Query for entries within the date range
-    const entriesQuery = query(
+    const q = query(
       collection(db, 'food_entries'),
       where('userId', '==', userId),
-      where('date', '>=', Timestamp.fromDate(startOfDay)),
-      where('date', '<=', Timestamp.fromDate(endOfDay)),
+      where('date', '>=', Timestamp.fromDate(startDate)),
+      where('date', '<=', Timestamp.fromDate(endDate)),
       orderBy('date', 'asc')
     );
-    
-    const snapshot = await getDocs(entriesQuery);
-    return snapshot.docs.map(doc => ({ 
-      id: doc.id, 
-      ...doc.data() 
-    }));
+
+    const querySnapshot = await getDocs(q);
+    const entries = querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        userId: data.userId,
+        name: data.name,
+        calories: data.calories,
+        date: data.date.toDate(),
+        time: data.time,
+        type: data.type,
+        completed: data.completed,
+        description: data.description,
+        waterIntake: data.waterIntake,
+        items: data.items,
+        count: data.count || 1,
+        lastUpdated: data.lastUpdated ? data.lastUpdated.toDate() : undefined,
+        imageId: data.imageId,
+        isFromImage: data.isFromImage || false
+      } as FoodEntry;
+    });
+
+    return entries;
   } catch (error) {
-    console.error('Error getting food entries:', error);
-    throw error;
+    console.error('Error getting food entries by date range:', error);
+    return [];
   }
 };
 
@@ -202,14 +220,20 @@ export const deleteFoodEntry = async (entryId: string, userId: string) => {
 };
 
 /**
- * Gets the total calories for a specific date
+ * Gets total calories for a specific date
  */
 export const getTotalCaloriesByDate = async (userId: string, date: Date) => {
   try {
-    const entries = await getFoodEntriesByDate(userId, date) as (FoodEntry & { id: string })[];
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    const entries = await getFoodEntriesByDate(userId, startOfDay, endOfDay);
     return entries.reduce((total, entry) => total + (entry.calories || 0), 0);
   } catch (error) {
     console.error('Error getting total calories:', error);
-    throw error;
+    return 0;
   }
 }; 
