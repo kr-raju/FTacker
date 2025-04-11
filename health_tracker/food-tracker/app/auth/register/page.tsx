@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { registerUser } from '../../../services/firebase'
+import { auth } from '../../../services/dbService'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -33,11 +33,13 @@ export default function RegisterPage() {
       }
 
       // Attempt registration
-      await registerUser(email, password)
+      const result = await auth.signUp(email, password)
+      console.log('Registration result:', result);
       
       // Redirect to profile setup on success
       router.push('/profile/setup')
     } catch (err: any) {
+      console.error('Registration error:', err);
       setError(err.message || 'Failed to register')
       setLoading(false)
     }

@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { loginUser } from '../../../services/firebase'
+import { auth } from '../../../services/dbService'
 import AccountSwitcher from '../../../components/AccountSwitcher'
 
 export default function LoginPage() {
@@ -12,6 +12,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // Check if user is already authenticated
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const isAuth = await auth.isAuthenticated()
+        if (isAuth) {
+          router.push('/dashboard')
+        }
+      } catch (err) {
+        console.error('Auth check error:', err)
+      }
+    }
+    checkAuth()
+  }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -25,12 +40,29 @@ export default function LoginPage() {
       }
 
       // Attempt login
-      await loginUser(email, password)
+      const result = await auth.signIn(email, password)
+      console.log('Login result:', result)
       
-      // Redirect to dashboard on success
-      router.push('/dashboard')
+      // Check if login was successful
+      if (result?.user) {
+        // Create user profile if it doesn't exist
+        try {
+          await auth.createUserProfile(result.user.id, result.user.email)
+        } catch (profileError) {
+          console.error('Profile creation error:', profileError)
+          // Continue even if profile creation fails
+        }
+        
+        // Redirect to dashboard
+        router.push('/dashboard')
+        router.refresh() // Force a refresh to update the auth state
+      } else {
+        throw new Error('Login failed - no user data received')
+      }
     } catch (err: any) {
+      console.error('Login error:', err)
       setError(err.message || 'Failed to log in')
+    } finally {
       setLoading(false)
     }
   }
