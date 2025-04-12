@@ -1,17 +1,4 @@
-import { db } from './firebase';
-import { 
-  collection, 
-  addDoc, 
-  query, 
-  where, 
-  getDocs, 
-  doc, 
-  getDoc,
-  updateDoc,
-  Timestamp,
-  serverTimestamp 
-} from 'firebase/firestore';
-import { getStorage, ref, uploadString, getDownloadURL } from 'firebase/storage';
+import * as dbProvider from './db-provider';
 import { FoodAnalysisResult, FoodImageData } from '../types/ai';
 import { FoodEntry } from './foodService';
 import { analyzeFoodImage } from './ai/geminiService';
@@ -26,33 +13,39 @@ const generateImageHash = (imageBase64: string): string => {
 
 /**
  * Find similar food images in our database
+ * @param userId The user ID
  * @param imageHash Hash of the image to find
  * @returns Matching food image data if found
  */
-export const findSimilarFoodImage = async (imageHash: string): Promise<FoodImageData | null> => {
+export const findSimilarFoodImage = async (userId: string, imageHash: string): Promise<FoodImageData & { id: string } | null> => {
   try {
-    const q = query(
-      collection(db, 'food_images'),
-      where('hash', '==', imageHash)
-    );
+    // Query for images with the same hash and belonging to the user
+    const images = await dbProvider.queryDocuments('food_images', [
+      { field: 'hash', operator: '==', value: imageHash },
+      { field: 'userId', operator: '==', value: userId }
+    ]);
     
-    const querySnapshot = await getDocs(q);
-    
-    if (querySnapshot.empty) {
+    if (!images || images.length === 0) {
       return null;
     }
     
-    const data = querySnapshot.docs[0].data();
+    // Get the first matching image
+    const data = images[0];
+    
+    if (!data.id) {
+      return null;
+    }
+    
     return {
-      id: querySnapshot.docs[0].id,
+      id: data.id,
       userId: data.userId,
       imageUrl: data.imageUrl,
       thumbnailUrl: data.thumbnailUrl,
       analysisResult: data.analysisResult,
-      createdAt: data.createdAt?.toDate(),
+      createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
       foodEntryId: data.foodEntryId,
       hash: data.hash
-    } as FoodImageData;
+    } as FoodImageData & { id: string };
   } catch (error) {
     console.error('Error finding similar food image:', error);
     return null;
@@ -66,22 +59,22 @@ export const findSimilarFoodImage = async (imageHash: string): Promise<FoodImage
  * @returns Analysis result and image URLs
  */
 export const uploadAndAnalyzeFoodImage = async (
-  userId: string, 
+  userId: string,
   imageBase64: string
 ): Promise<{
-  analysisResult: FoodAnalysisResult,
-  imageUrl: string,
-  thumbnailUrl: string,
-  imageData: FoodImageData
+  analysisResult: FoodAnalysisResult;
+  imageUrl: string;
+  thumbnailUrl: string;
+  imageData: FoodImageData & { id: string };
 }> => {
   try {
-    // Generate hash for image comparison
-    const imageHash = generateImageHash(imageBase64);
+    // Generate image hash for comparing similar images
+    const imageHash = await generateImageHash(imageBase64);
     
-    // Check if we've seen this image before
-    const existingImage = await findSimilarFoodImage(imageHash);
+    // Check if we already have a similar image
+    const existingImage = await findSimilarFoodImage(userId, imageHash);
     
-    if (existingImage) {
+    if (existingImage && existingImage.id) {
       console.log('Found existing analysis for similar image');
       return {
         analysisResult: existingImage.analysisResult,
@@ -91,55 +84,68 @@ export const uploadAndAnalyzeFoodImage = async (
       };
     }
     
-    // Upload image to Firebase Storage
-    const storage = getStorage();
+    // Upload image to storage
     const timestamp = new Date().getTime();
-    const imageRef = ref(storage, `food_images/${userId}/${timestamp}.jpg`);
+    const imagePath = `${userId}/${timestamp}.jpg`;
     
-    // Remove the base64 prefix if present
-    const base64Data = imageBase64.includes('base64,') 
-      ? imageBase64.split('base64,')[1] 
-      : imageBase64;
+    console.log(`Uploading image to path: ${imagePath} in bucket: food-images`);
     
-    // Upload the image
-    await uploadString(imageRef, base64Data, 'base64');
-    
-    // Get the image URL
-    const imageUrl = await getDownloadURL(imageRef);
-    
-    // For simplicity, we'll use the same image as thumbnail
-    // In production, you'd generate a smaller thumbnail
-    const thumbnailUrl = imageUrl;
-    
-    // Analyze the image using Gemini
-    const analysisResult = await analyzeFoodImage(base64Data);
-    
-    // Store the image data and analysis in Firestore
-    const foodImageData: FoodImageData = {
-      userId,
-      imageUrl,
-      thumbnailUrl,
-      analysisResult,
-      hash: imageHash,
-      createdAt: new Date()
-    };
-    
-    const imageDocRef = await addDoc(collection(db, 'food_images'), {
-      ...foodImageData,
-      createdAt: serverTimestamp()
-    });
-    
-    return {
-      analysisResult,
-      imageUrl,
-      thumbnailUrl,
-      imageData: {
-        ...foodImageData,
-        id: imageDocRef.id
-      }
-    };
-  } catch (error) {
+    // Upload the image using our provider interface
+    try {
+      const { url: imageUrl } = await dbProvider.uploadBase64File('food-images', imagePath, imageBase64);
+      
+      // For simplicity, we'll use the same image as thumbnail
+      // In production, you'd generate a smaller thumbnail
+      const thumbnailUrl = imageUrl;
+      
+      // Analyze the image using Gemini
+      // Remove the base64 prefix if present
+      const base64Data = imageBase64.includes('base64,')
+        ? imageBase64.split('base64,')[1]
+        : imageBase64;
+        
+      const analysisResult = await analyzeFoodImage(base64Data);
+      
+      // Store the image data and analysis in the database
+      const foodImageData: FoodImageData = {
+        userId,
+        imageUrl,
+        thumbnailUrl,
+        analysisResult,
+        hash: imageHash,
+        createdAt: new Date()
+      };
+      
+      // Create a document in our database
+      const imageDoc = await dbProvider.createDocument('food_images', foodImageData);
+      
+      return {
+        analysisResult,
+        imageUrl,
+        thumbnailUrl,
+        imageData: {
+          ...foodImageData,
+          id: imageDoc.id
+        }
+      };
+    } catch (uploadError: any) {
+      console.error('Storage upload error:', uploadError);
+      throw {
+        message: `Failed to upload image: ${uploadError.message || 'Unknown storage error'}`,
+        original: uploadError
+      };
+    }
+  } catch (error: any) {
     console.error('Error uploading and analyzing food image:', error);
+    
+    // Provide a more helpful error message
+    if (error.statusCode === '500' && error.code === 'DatabaseError') {
+      throw {
+        message: 'There was a problem saving your image to storage. Please try again or contact support.',
+        original: error
+      };
+    }
+    
     throw error;
   }
 };
@@ -151,20 +157,19 @@ export const uploadAndAnalyzeFoodImage = async (
  */
 export const getFoodImage = async (imageId: string): Promise<FoodImageData | null> => {
   try {
-    const imageDoc = await getDoc(doc(db, 'food_images', imageId));
+    const data = await dbProvider.getDocument('food_images', imageId);
     
-    if (!imageDoc.exists()) {
+    if (!data) {
       return null;
     }
     
-    const data = imageDoc.data();
     return {
-      id: imageDoc.id,
+      id: data.id,
       userId: data.userId,
       imageUrl: data.imageUrl,
       thumbnailUrl: data.thumbnailUrl,
       analysisResult: data.analysisResult,
-      createdAt: data.createdAt?.toDate(),
+      createdAt: data.createdAt ? new Date(data.createdAt) : undefined,
       foodEntryId: data.foodEntryId,
       hash: data.hash
     } as FoodImageData;
@@ -181,9 +186,9 @@ export const getFoodImage = async (imageId: string): Promise<FoodImageData | nul
  */
 export const linkFoodImageToEntry = async (imageId: string, foodEntryId: string): Promise<boolean> => {
   try {
-    await updateDoc(doc(db, 'food_images', imageId), {
+    await dbProvider.updateDocument('food_images', imageId, {
       foodEntryId,
-      updatedAt: serverTimestamp()
+      updatedAt: new Date()
     });
     return true;
   } catch (error) {
@@ -205,55 +210,76 @@ export const addFoodEntryFromImage = async (
   imageId?: string
 ): Promise<FoodEntry & { id: string, imageId?: string }> => {
   try {
-    // Create the food entry document
-    const foodEntryRef = doc(collection(db, 'food_entries'));
-    
     // Format the entry data
     const now = new Date();
+    // Format date as ISO string to ensure compatibility with the database
+    const isoDate = now.toISOString();
     const timeString = now.toLocaleTimeString('en-US', { 
       hour: '2-digit', 
       minute: '2-digit',
       hour12: true 
     });
     
-    const entryData: Omit<FoodEntry, 'id'> = {
-      userId,
+    console.log("Creating food entry from image analysis for user:", userId);
+    console.log("Analysis result:", analysisResult);
+    console.log("Image ID:", imageId);
+    
+    const entryData = {
+      userId: userId,
+      user_id: userId, // Include both formats for compatibility
       name: analysisResult.description,
       calories: analysisResult.totalCalories,
-      date: now,
+      // Store date in ISO format for the database
+      date: isoDate,
       time: timeString,
       type: analysisResult.mealType,
       completed: true,
       description: `${analysisResult.items.map(item => item.name).join(', ')}`,
       waterIntake: analysisResult.waterIntake,
+      water_intake: analysisResult.waterIntake, // Include both formats
       items: analysisResult.items.map(item => item.name),
       count: 1,
-      lastUpdated: now
+      createdAt: isoDate,
+      created_at: isoDate, // Include both formats
+      updatedAt: isoDate,
+      updated_at: isoDate, // Include both formats
+      isFromImage: true,
+      is_from_image: true // Include both formats
     };
     
     // Add the image ID if provided
-    const entryWithImage = imageId ? { ...entryData, imageId } : entryData;
+    const entryWithImage = imageId ? { 
+      ...entryData, 
+      imageId: imageId,
+      image_id: imageId // Include both formats
+    } : entryData;
     
-    // Convert Date objects to Firestore Timestamps
-    const firestoreData = {
-      ...entryWithImage,
-      date: Timestamp.fromDate(now),
-      lastUpdated: Timestamp.fromDate(now),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    };
+    console.log("Food entry data to be created:", entryWithImage);
     
-    await updateDoc(foodEntryRef, firestoreData);
+    // Create food entry in our database
+    const foodEntry = await dbProvider.createDocument('food_entries', entryWithImage);
+    console.log("Created food entry:", foodEntry);
     
     // If we have an image ID, link it to this entry
     if (imageId) {
-      await linkFoodImageToEntry(imageId, foodEntryRef.id);
+      const linkedResult = await linkFoodImageToEntry(imageId, foodEntry.id);
+      console.log("Linked food image to entry:", linkedResult);
     }
     
+    // Return a properly formatted entry that can be used by the app
     return {
-      id: foodEntryRef.id,
-      ...entryData,
-      imageId
+      ...foodEntry,
+      // Ensure date is a JavaScript Date object
+      date: now,
+      time: timeString,
+      // Add both camelCase and snake_case properties for compatibility
+      userId: userId,
+      user_id: userId,
+      imageId: imageId,
+      image_id: imageId,
+      isFromImage: true,
+      is_from_image: true,
+      lastUpdated: now
     };
   } catch (error) {
     console.error('Error adding food entry from image:', error);

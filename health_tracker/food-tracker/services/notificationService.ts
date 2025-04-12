@@ -1,17 +1,4 @@
-import { db } from './firebase';
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  updateDoc, 
-  deleteDoc,
-  query, 
-  where, 
-  orderBy,
-  onSnapshot,
-  Timestamp
-} from 'firebase/firestore';
+import * as dbProvider from './db-provider';
 
 // Notification type
 export type NotificationType = {
@@ -30,20 +17,30 @@ export type NotificationType = {
  */
 export const getUserNotifications = async (userId: string): Promise<NotificationType[]> => {
   try {
-    const notificationsQuery = query(
-      collection(db, 'notifications'),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'desc')
-    );
+    if (!userId) {
+      console.warn('getUserNotifications called with empty userId');
+      return [];
+    }
     
-    const snapshot = await getDocs(notificationsQuery);
-    return snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })) as NotificationType[];
+    // Use the array-style filter which will be properly transformed by db-provider
+    const notifications = await dbProvider.queryDocuments('notifications', [
+      { field: 'userId', operator: '==', value: userId }
+    ]);
+    
+    // Sort by created_at descending
+    return notifications
+      .sort((a, b) => {
+        const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+        const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
+        return dateB.getTime() - dateA.getTime();
+      })
+      .map(notification => ({
+        id: notification.id,
+        ...notification
+      })) as NotificationType[];
   } catch (error) {
     console.error('Error getting notifications:', error);
-    throw error;
+    return [];
   }
 };
 
@@ -52,8 +49,7 @@ export const getUserNotifications = async (userId: string): Promise<Notification
  */
 export const markNotificationAsRead = async (notificationId: string): Promise<void> => {
   try {
-    const notificationRef = doc(db, 'notifications', notificationId);
-    await updateDoc(notificationRef, {
+    await dbProvider.updateDocument('notifications', notificationId, {
       read: true
     });
   } catch (error) {
@@ -67,18 +63,23 @@ export const markNotificationAsRead = async (notificationId: string): Promise<vo
  */
 export const markAllNotificationsAsRead = async (userId: string): Promise<void> => {
   try {
-    const notificationsQuery = query(
-      collection(db, 'notifications'),
-      where('userId', '==', userId),
-      where('read', '==', false)
+    if (!userId) {
+      console.warn('markAllNotificationsAsRead called with empty userId');
+      return;
+    }
+    
+    // Get all unread notifications for the user
+    const notifications = await dbProvider.queryDocuments('notifications', [
+      { field: 'userId', operator: '==', value: userId },
+      { field: 'read', operator: '==', value: false }
+    ]);
+    
+    // Update each notification
+    const updatePromises = notifications.map(notification => 
+      dbProvider.updateDocument('notifications', notification.id, { read: true })
     );
     
-    const snapshot = await getDocs(notificationsQuery);
-    const batch = snapshot.docs.map(doc => 
-      updateDoc(doc.ref, { read: true })
-    );
-    
-    await Promise.all(batch);
+    await Promise.all(updatePromises);
   } catch (error) {
     console.error('Error marking all notifications as read:', error);
     throw error;
@@ -90,8 +91,7 @@ export const markAllNotificationsAsRead = async (userId: string): Promise<void> 
  */
 export const deleteNotification = async (notificationId: string): Promise<void> => {
   try {
-    const notificationRef = doc(db, 'notifications', notificationId);
-    await deleteDoc(notificationRef);
+    await dbProvider.deleteDocument('notifications', notificationId);
   } catch (error) {
     console.error('Error deleting notification:', error);
     throw error;
@@ -99,21 +99,22 @@ export const deleteNotification = async (notificationId: string): Promise<void> 
 };
 
 /**
- * Listens for changes to a user's notifications in real-time
+ * For real-time notifications, we'll need to set up a subscription approach
+ * This is a mock implementation until we implement real-time with Supabase
  */
 export const onNotificationsChanged = (userId: string, callback: (notifications: NotificationType[]) => void) => {
-  const notificationsQuery = query(
-    collection(db, 'notifications'),
-    where('userId', '==', userId),
-    orderBy('createdAt', 'desc')
-  );
+  // Initially load notifications
+  getUserNotifications(userId).then(callback);
   
-  return onSnapshot(notificationsQuery, (snapshot) => {
-    const notifications = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })) as NotificationType[];
-    
+  // With Supabase, you'd use their real-time subscription
+  // For now, we'll poll every 30 seconds as a fallback
+  const intervalId = setInterval(async () => {
+    const notifications = await getUserNotifications(userId);
     callback(notifications);
-  });
+  }, 30000);
+  
+  // Return a function to unsubscribe
+  return () => {
+    clearInterval(intervalId);
+  };
 }; 

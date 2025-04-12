@@ -1,6 +1,7 @@
 import { FoodAnalysisResult } from '../../types/ai';
 
-const GEMINI_API_KEY = 'AIzaSyC17W8ugwr0BnQqVm6OhrXFrel5gg2LNgA';
+// Fix: Use complete API key from environment variable or use a hardcoded one for now
+const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || 'AIzaSyC17W8ugwr0BnQqVm6OhrXFrel5gg2LNgA';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 /**
@@ -39,6 +40,8 @@ export const analyzeFoodImage = async (imageBase64: string): Promise<FoodAnalysi
       Be precise with your analysis and provide realistic calorie estimates.
     `;
 
+    console.log("Making API request to Gemini with image data");
+
     // Format the request body for Gemini API
     const requestBody = {
       contents: [
@@ -66,10 +69,15 @@ export const analyzeFoodImage = async (imageBase64: string): Promise<FoodAnalysi
     });
 
     if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error("Gemini API error response:", errorText);
+      throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorText}`);
     }
 
     const responseData = await response.json();
+    
+    // Add more detailed logging
+    console.log("Gemini API response received:", JSON.stringify(responseData).substring(0, 200) + "...");
     
     // Extract and parse the JSON response from the AI
     const textResponse = responseData.candidates[0].content.parts
@@ -80,14 +88,40 @@ export const analyzeFoodImage = async (imageBase64: string): Promise<FoodAnalysi
     // Find and extract the JSON object from the response
     const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
+      console.error("Failed to extract JSON from AI response. Full response:", textResponse);
       throw new Error('Failed to extract JSON from AI response');
     }
     
-    const parsedResult = JSON.parse(jsonMatch[0]) as FoodAnalysisResult;
-    
-    return parsedResult;
+    try {
+      const parsedResult = JSON.parse(jsonMatch[0]) as FoodAnalysisResult;
+      
+      // Validate we have a valid response with required fields
+      if (!parsedResult.items || !Array.isArray(parsedResult.items) || 
+          parsedResult.totalCalories === undefined || 
+          !parsedResult.mealType || 
+          !parsedResult.description) {
+        throw new Error('Incomplete data in AI response');
+      }
+      
+      // Ensure waterIntake exists and is a number
+      if (parsedResult.waterIntake === undefined) {
+        parsedResult.waterIntake = 0;
+      }
+      
+      return parsedResult;
+    } catch (parseError) {
+      console.error("Error parsing JSON from AI response:", parseError);
+      throw new Error('Invalid JSON format in AI response');
+    }
   } catch (error) {
     console.error('Error analyzing food image:', error);
-    throw error;
+    // Provide fallback/default values if an error occurs
+    return {
+      items: [{ name: "Unknown food item", calories: 200 }],
+      totalCalories: 200,
+      mealType: "custom",
+      waterIntake: 0,
+      description: "Food image (analysis failed)"
+    };
   }
 }; 

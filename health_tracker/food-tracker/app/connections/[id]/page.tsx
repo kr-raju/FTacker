@@ -5,15 +5,18 @@ import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { getCurrentUser } from '../../../services/firebase'
 import { 
-  getConnectionTracking, 
-  ConnectionTrackingData 
+  getConnectionTrackingData, 
+  ConnectionTrackingData,
+  getUserConnections,
+  findUserByEmail
 } from '../../../services/connectionService'
 import Header from '../../../components/Header'
+import * as dbProvider from '../../../services/db-provider'
 
 type UserData = {
   id: string;
   email: string;
-  displayName?: string;
+  name?: string;
   userInfo?: {
     age: number;
     sex: string;
@@ -96,46 +99,95 @@ export default function ConnectionDetailPage() {
         setUser(currentUser);
         console.log('Current user:', currentUser.uid);
         
-        // Get connection tracking data
-        const data: ConnectionTrackingData = await getConnectionTracking(connectionId, currentUser.uid);
-        console.log('Connection tracking data:', data);
+        // Get connection data
+        const connections = await getUserConnections(currentUser.uid);
+        const connectionData = connections.find(c => c.id === connectionId);
+        
+        if (!connectionData) {
+          throw new Error("Connection not found");
+        }
+        
+        // Get connected user data
+        const connectedUserId = connectionData.role === 'sender' 
+          ? connectionData.connectedUserId 
+          : connectionData.userId;
+        
+        const connectedUserData = await dbProvider.getDocument('users', connectedUserId);
+        
+        if (!connectedUserData) {
+          throw new Error("Connected user not found");
+        }
+        
+        // Get basic tracking stats
+        const trackingData: ConnectionTrackingData = await getConnectionTrackingData(connectedUserId);
+        console.log('Connection tracking data:', trackingData);
+        
+        // Get food entries for the connected user
+        const foodEntries = await dbProvider.queryDocuments('food_entries', [
+          { field: 'userId', operator: '==', value: connectedUserId }
+        ]);
+        
+        // Convert to MealEntry format
+        const mealEntriesData = foodEntries.map((entry: any) => ({
+          id: entry.id,
+          userId: entry.userId,
+          date: entry.date,
+          name: entry.name,
+          time: entry.mealType || 'breakfast',
+          calories: entry.calories || 0,
+          items: [entry.name],
+          completed: true,
+          protein: entry.protein || 0,
+          carbs: entry.carbs || 0,
+          fat: entry.fat || 0
+        }));
         
         // Set connection data
         setConnection({
           id: connectionId,
-          name: data.user.displayName || data.user.email.split('@')[0],
-          email: data.user.email,
-          status: data.connection.status,
-          lastUpdate: data.connection.updatedAt ? 
-            new Date(data.connection.updatedAt.seconds * 1000).toISOString() : 
+          name: connectedUserData.name || connectedUserData.email.split('@')[0],
+          email: connectedUserData.email,
+          status: connectionData.status,
+          lastUpdate: connectionData.createdAt ? 
+            new Date(connectionData.createdAt).toISOString() : 
             new Date().toISOString(),
-          userInfo: data.user.userInfo,
-          dailyGoals: data.goals || undefined
+          userInfo: connectedUserData.userInfo,
+          dailyGoals: {
+            calories: 2000,
+            protein: 50,
+            carbs: 250,
+            fat: 70,
+            water: 2000
+          }
         });
         
         // Set meal entries
-        setMealEntries(data.entries);
+        setMealEntries(mealEntriesData);
         
         // Calculate nutrition summary
-        const totalCalories = data.entries.reduce((sum, entry) => sum + (entry.completed ? entry.calories : 0), 0);
-        const totalProtein = data.entries.reduce((sum, entry) => sum + (entry.completed ? (entry.protein || 0) : 0), 0);
-        const totalCarbs = data.entries.reduce((sum, entry) => sum + (entry.completed ? (entry.carbs || 0) : 0), 0);
-        const totalFat = data.entries.reduce((sum, entry) => sum + (entry.completed ? (entry.fat || 0) : 0), 0);
+        const totalCalories = mealEntriesData.reduce((sum: number, entry: MealEntry) => 
+          sum + (entry.completed ? entry.calories : 0), 0);
+        const totalProtein = mealEntriesData.reduce((sum: number, entry: MealEntry) => 
+          sum + (entry.completed ? (entry.protein || 0) : 0), 0);
+        const totalCarbs = mealEntriesData.reduce((sum: number, entry: MealEntry) => 
+          sum + (entry.completed ? (entry.carbs || 0) : 0), 0);
+        const totalFat = mealEntriesData.reduce((sum: number, entry: MealEntry) => 
+          sum + (entry.completed ? (entry.fat || 0) : 0), 0);
         
         setNutritionSummary({
           calories: {
             consumed: totalCalories,
-            goal: data.goals?.calories || 2000,
-            remaining: (data.goals?.calories || 2000) - totalCalories
+            goal: 2000,
+            remaining: 2000 - totalCalories
           },
           macros: {
-            protein: { value: totalProtein, goal: data.goals?.protein || 50 },
-            carbs: { value: totalCarbs, goal: data.goals?.carbs || 250 },
-            fat: { value: totalFat, goal: data.goals?.fat || 70 }
+            protein: { value: totalProtein, goal: 50 },
+            carbs: { value: totalCarbs, goal: 250 },
+            fat: { value: totalFat, goal: 70 }
           },
           water: {
-            consumed: data.user.waterIntake || 0,
-            goal: data.goals?.water || 2000
+            consumed: 0,
+            goal: 2000
           }
         });
         

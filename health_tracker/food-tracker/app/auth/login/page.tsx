@@ -2,12 +2,11 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { loginUser } from '../../../services/firebase'
+import { useAuth } from '../../auth-provider'
 import AccountSwitcher from '../../../components/AccountSwitcher'
 
 export default function LoginPage() {
-  const router = useRouter()
+  const { login } = useAuth();
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -25,10 +24,9 @@ export default function LoginPage() {
       }
 
       // Attempt login
-      await loginUser(email, password)
+      await login(email, password);
       
-      // Redirect to dashboard on success
-      router.push('/dashboard')
+      // Router navigation is handled in the auth provider
     } catch (err: any) {
       setError(err.message || 'Failed to log in')
       setLoading(false)

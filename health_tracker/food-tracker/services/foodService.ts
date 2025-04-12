@@ -1,18 +1,4 @@
-import { db } from './firebase';
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc,
-  query, 
-  where, 
-  orderBy,
-  serverTimestamp,
-  Timestamp
-} from 'firebase/firestore';
+import * as dbProvider from './db-provider';
 
 // Types
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snacks' | 'coffee' | 'custom';
@@ -40,22 +26,18 @@ export interface FoodEntry {
  */
 export const addFoodEntry = async (foodEntry: Omit<FoodEntry, 'id' | 'createdAt' | 'updatedAt'>) => {
   try {
-    // Create a new document in the food_entries collection
-    const entryRef = doc(collection(db, 'food_entries'));
-    
-    // Make sure date is a Firestore Timestamp
-    const entry = {
+    // Create a document with our database provider
+    const entry = await dbProvider.createDocument('food_entries', {
       ...foodEntry,
-      date: foodEntry.date instanceof Date 
-        ? Timestamp.fromDate(foodEntry.date) 
-        : foodEntry.date,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
+      // Ensure date is correctly converted for storage
+      date: foodEntry.date
+    });
+    
+    return {
+      ...entry,
+      // Ensure the date is a JavaScript Date object for the client
+      date: foodEntry.date instanceof Date ? foodEntry.date : new Date(foodEntry.date)
     };
-    
-    await setDoc(entryRef, entry);
-    
-    return { id: entryRef.id, ...entry };
   } catch (error) {
     console.error('Error adding food entry:', error);
     throw error;
@@ -71,37 +53,37 @@ export const getFoodEntriesByDate = async (
   endDate: Date
 ): Promise<FoodEntry[]> => {
   try {
-    const q = query(
-      collection(db, 'food_entries'),
-      where('userId', '==', userId),
-      where('date', '>=', Timestamp.fromDate(startDate)),
-      where('date', '<=', Timestamp.fromDate(endDate)),
-      orderBy('date', 'asc')
-    );
-
-    const querySnapshot = await getDocs(q);
-    const entries = querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        userId: data.userId,
-        name: data.name,
-        calories: data.calories,
-        date: data.date.toDate(),
-        time: data.time,
-        type: data.type,
-        completed: data.completed,
-        description: data.description,
-        waterIntake: data.waterIntake,
-        items: data.items,
-        count: data.count || 1,
-        lastUpdated: data.lastUpdated ? data.lastUpdated.toDate() : undefined,
-        imageId: data.imageId,
-        isFromImage: data.isFromImage || false
-      } as FoodEntry;
+    // For simplicity, we'll query all entries for the user
+    // and then filter by date in JavaScript
+    // In a production environment, we'd create proper database filters
+    const allEntries = await dbProvider.queryDocuments('food_entries', { userId });
+    
+    // Filter entries within the date range
+    const entriesInRange = allEntries.filter(entry => {
+      const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date);
+      return entryDate >= startDate && entryDate <= endDate;
     });
-
-    return entries;
+    
+    // Convert data formats
+    return entriesInRange.map(entry => ({
+      id: entry.id,
+      userId: entry.userId,
+      name: entry.name,
+      calories: entry.calories,
+      date: entry.date instanceof Date ? entry.date : new Date(entry.date),
+      time: entry.time,
+      type: entry.type,
+      completed: entry.completed,
+      description: entry.description,
+      waterIntake: entry.waterIntake,
+      items: entry.items,
+      count: entry.count || 1,
+      lastUpdated: entry.lastUpdated ? 
+        (entry.lastUpdated instanceof Date ? entry.lastUpdated : new Date(entry.lastUpdated)) 
+        : undefined,
+      imageId: entry.imageId,
+      isFromImage: entry.isFromImage || false
+    }));
   } catch (error) {
     console.error('Error getting food entries by date range:', error);
     return [];
@@ -113,24 +95,9 @@ export const getFoodEntriesByDate = async (
  */
 export const getFoodEntriesByDateRange = async (userId: string, startDate: Date, endDate: Date) => {
   try {
-    // Convert dates to Firestore Timestamps
-    const start = Timestamp.fromDate(new Date(startDate));
-    const end = Timestamp.fromDate(new Date(endDate));
-    
-    // Query for entries within the date range
-    const entriesQuery = query(
-      collection(db, 'food_entries'),
-      where('userId', '==', userId),
-      where('date', '>=', start),
-      where('date', '<=', end),
-      orderBy('date', 'asc')
-    );
-    
-    const snapshot = await getDocs(entriesQuery);
-    return snapshot.docs.map(doc => ({ 
-      id: doc.id, 
-      ...doc.data() 
-    }));
+    // This is essentially the same as getFoodEntriesByDate
+    // Kept for backward compatibility
+    return getFoodEntriesByDate(userId, startDate, endDate);
   } catch (error) {
     console.error('Error getting food entries:', error);
     throw error;
@@ -142,13 +109,19 @@ export const getFoodEntriesByDateRange = async (userId: string, startDate: Date,
  */
 export const getFoodEntry = async (entryId: string) => {
   try {
-    const entryDoc = await getDoc(doc(db, 'food_entries', entryId));
+    const entry = await dbProvider.getDocument('food_entries', entryId);
     
-    if (!entryDoc.exists()) {
+    if (!entry) {
       throw new Error('Food entry not found');
     }
     
-    return { id: entryDoc.id, ...entryDoc.data() };
+    return {
+      ...entry,
+      date: entry.date instanceof Date ? entry.date : new Date(entry.date),
+      lastUpdated: entry.lastUpdated ? 
+        (entry.lastUpdated instanceof Date ? entry.lastUpdated : new Date(entry.lastUpdated)) 
+        : undefined
+    };
   } catch (error) {
     console.error('Error getting food entry:', error);
     throw error;
@@ -160,31 +133,25 @@ export const getFoodEntry = async (entryId: string) => {
  */
 export const updateFoodEntry = async (entryId: string, data: Partial<FoodEntry>, userId: string) => {
   try {
-    const entryRef = doc(db, 'food_entries', entryId);
-    const entryDoc = await getDoc(entryRef);
+    // Get the current entry to verify ownership
+    const entry = await dbProvider.getDocument('food_entries', entryId);
     
-    if (!entryDoc.exists()) {
+    if (!entry) {
       throw new Error('Food entry not found');
     }
     
-    const entryData = entryDoc.data();
-    
     // Ensure user is authorized to update this entry
-    if (entryData.userId !== userId) {
+    if (entry.userId !== userId) {
       throw new Error('Unauthorized to update this food entry');
     }
     
-    // Convert date to Timestamp if it's a Date object
-    const updateData = {
+    // Update the entry
+    await dbProvider.updateDocument('food_entries', entryId, {
       ...data,
-      updatedAt: serverTimestamp()
-    };
+      // Ensure date is correctly handled
+      date: data.date instanceof Date ? data.date : data.date
+    });
     
-    if (data.date && data.date instanceof Date) {
-      updateData.date = Timestamp.fromDate(data.date);
-    }
-    
-    await updateDoc(entryRef, updateData);
     return true;
   } catch (error) {
     console.error('Error updating food entry:', error);
@@ -197,21 +164,21 @@ export const updateFoodEntry = async (entryId: string, data: Partial<FoodEntry>,
  */
 export const deleteFoodEntry = async (entryId: string, userId: string) => {
   try {
-    const entryRef = doc(db, 'food_entries', entryId);
-    const entryDoc = await getDoc(entryRef);
+    // Get the current entry to verify ownership
+    const entry = await dbProvider.getDocument('food_entries', entryId);
     
-    if (!entryDoc.exists()) {
+    if (!entry) {
       throw new Error('Food entry not found');
     }
     
-    const entryData = entryDoc.data();
-    
     // Ensure user is authorized to delete this entry
-    if (entryData.userId !== userId) {
+    if (entry.userId !== userId) {
       throw new Error('Unauthorized to delete this food entry');
     }
     
-    await deleteDoc(entryRef);
+    // Delete the entry
+    await dbProvider.deleteDocument('food_entries', entryId);
+    
     return true;
   } catch (error) {
     console.error('Error deleting food entry:', error);

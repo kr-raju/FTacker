@@ -3,18 +3,20 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { getCurrentUser, signOut } from '../../services/firebase'
+import { getCurrentUser, signOut } from '../../services/db-provider'
 import Header from '../../components/Header'
 import AccountSwitcher from '../../components/AccountSwitcher'
 import DashboardStats from '../../components/DashboardStats'
 import WeekCalendar from '../../components/WeekCalendar'
 import MonthCalendar from '../../components/MonthCalendar'
+import Connections from './connections'
 import { 
   Connection,
   getUserConnections,
   createConnectionRequest,
   acceptConnection,
-  rejectConnection
+  rejectConnection,
+  findUserByEmail
 } from '../../services/connectionService'
 import {
   FoodEntry,
@@ -23,12 +25,12 @@ import {
   getFoodEntriesByDate
 } from '../../services/foodService'
 import { getUserNotifications, markNotificationAsRead, NotificationType } from '../../services/notificationService'
-import { Timestamp } from 'firebase/firestore'
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc, orderBy, limit } from 'firebase/firestore'
-import { db } from '../../services/firebase'
+import * as dbProvider from '../../services/db-provider'
 import { convertFoodEntriesToMealEntries } from '../../services/foodServiceAdapter'
 import FoodImageUploader from '../../components/FoodImageUploader'
 import FoodEntryItem from '../../components/FoodEntryItem'
+// Import the auth provider
+import { useAuth } from '../auth-provider'
 
 // Food entry and meal tracking types
 type MealEntry = {
@@ -45,6 +47,8 @@ type MealEntry = {
   waterIntake?: number;
   count?: number; // Number of times this meal has been added
   lastUpdated?: Date; // Timestamp of last update
+  imageId?: string; // Add support for image entries
+  isFromImage?: boolean; // Flag for image-based entries
 };
 
 // New type for food suggestions
@@ -533,10 +537,14 @@ const estimateCalories = (foodName: string, portionSize: number = 1, unit: strin
 
 export default function DashboardPage() {
   const router = useRouter()
-
-  // State for user, loading, and data
-  const [user, setUser] = useState<any>(null)
+  // Use the auth provider hook instead of local user state
+  const { user } = useAuth()
   const [loading, setLoading] = useState(true)
+  // State variables for calculations
+  const [totalCalories, setTotalCalories] = useState(0)
+  const [totalWaterIntake, setTotalWaterIntake] = useState(0)
+  
+  // State for meal entries
   const [mealEntries, setMealEntries] = useState<MealEntry[]>([])
   const [connections, setConnections] = useState<Connection[]>([])
   const [notifications, setNotifications] = useState<any[]>([])
@@ -560,6 +568,7 @@ export default function DashboardPage() {
   // State for new meal form
   const [newMealName, setNewMealName] = useState('')
   const [newMealDescription, setNewMealDescription] = useState('')
+  const [newMealCalories, setNewMealCalories] = useState('')
   const [newMealWaterIntake, setNewMealWaterIntake] = useState('')
   const [customMealType, setCustomMealType] = useState('')
   const [connectionEmail, setConnectionEmail] = useState('')
@@ -705,30 +714,35 @@ export default function DashboardPage() {
   // Get user data, connections, and notifications on page load
   useEffect(() => {
     const checkAuth = async () => {
-      const currentUser = getCurrentUser()
-      
-      if (!currentUser) {
+      // No need to get the current user manually as we have it from useAuth
+      if (!user) {
         // Redirect to login if not authenticated
         router.push('/auth/login')
         return
       }
       
-      setUser(currentUser)
-      
       try {
+        // Get the correct user ID
+        const userId = user.id || user.uid
+        
+        if (!userId) {
+          console.error('No user ID available')
+          return
+        }
+        
         // Load connections
-        const userConnections = await getUserConnections(currentUser.uid)
+        const userConnections = await getUserConnections(userId)
         setConnections(userConnections as Connection[])
         
         // Load notifications
-        const userNotifications = await getUserNotifications(currentUser.uid)
+        const userNotifications = await getUserNotifications(userId)
         setNotifications(userNotifications)
         
         // Load meal entries for current date
-        await loadMealEntries(currentUser.uid)
+        await loadMealEntries(userId)
         
         // Load recent meals for suggestions
-        await loadRecentMeals(currentUser.uid)
+        await loadRecentMeals(userId)
       } catch (error) {
         console.error('Error loading data:', error)
       } finally {
@@ -737,7 +751,7 @@ export default function DashboardPage() {
     }
     
     checkAuth()
-  }, [router, currentDate])
+  }, [router, currentDate, user]) // Add user as a dependency
   
   const loadMealEntries = async (userId: string) => {
     try {
@@ -774,11 +788,91 @@ export default function DashboardPage() {
       
       console.log(`Loading entries from ${startDate.toISOString()} to ${endDate.toISOString()}`);
       
-      const foodEntries = await getFoodEntriesByDate(userId, startDate, endDate);
-      const mealEntries = convertFoodEntriesToMealEntries(foodEntries);
+      // Simplify the query to make sure we're getting all entries
+      // This is a debugging step to see if anything is missing
+      const entries = await dbProvider.queryDocuments('food_entries', [
+        { field: 'userId', operator: '==', value: userId }
+      ]);
+      
+      console.log(`Found ${entries.length} total entries for user ${userId}`);
+      
+      // Filter entries for the current date range in JavaScript
+      // This helps us see if the issue is with querying or with the date range
+      const filteredEntries = entries.filter(entry => {
+        const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date);
+        return entryDate >= startDate && entryDate <= endDate;
+      });
+      
+      console.log(`After date filtering, found ${filteredEntries.length} entries for the current view`);
+      console.log("Raw entries from database:", filteredEntries);
+      
+      // Convert entries from Supabase format to our app's format
+      const mealEntries = filteredEntries.map((entry: any) => {
+        // Log each entry being processed for debugging
+        console.log("Processing entry:", entry);
+        
+        // Make sure to handle both camelCase and snake_case field names
+        // This is crucial because database field names might be snake_case
+        const processedEntry = {
+          id: entry.id,
+          userId: entry.userId || entry.user_id,
+          date: entry.date instanceof Date ? entry.date : new Date(entry.date),
+          name: entry.name,
+          time: entry.time || new Date(entry.created_at || entry.createdAt || Date.now()).toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: true 
+          }),
+          calories: entry.calories || 0,
+          items: Array.isArray(entry.items) ? entry.items : 
+                 (entry.items ? JSON.parse(typeof entry.items === 'string' ? entry.items : JSON.stringify(entry.items)) : 
+                 [entry.name]),
+          completed: entry.completed === undefined ? true : entry.completed,
+          type: entry.type || 'custom',
+          description: entry.description,
+          waterIntake: entry.waterIntake || entry.water_intake || 0,
+          count: entry.count || 1,
+          lastUpdated: entry.lastUpdated || entry.updated_at || entry.createdAt || entry.created_at || new Date(),
+          imageId: entry.imageId || entry.image_id,
+          isFromImage: entry.isFromImage || entry.is_from_image || false
+        };
+        
+        console.log("Processed entry:", processedEntry);
+        return processedEntry;
+      });
+      
+      // Sort entries by time
+      mealEntries.sort((a, b) => {
+        try {
+          const timeA = new Date(`1970-01-01T${a.time}`).getTime();
+          const timeB = new Date(`1970-01-01T${b.time}`).getTime();
+          return timeA - timeB;
+        } catch (error) {
+          console.error("Error sorting entries by time:", error);
+          return 0;
+        }
+      });
+      
+      console.log("Final meal entries after processing:", mealEntries);
+      
+      // Check specifically for image-based entries
+      const imageBasedEntries = mealEntries.filter(entry => entry.isFromImage || entry.imageId);
+      console.log("Image-based entries:", imageBasedEntries.length, imageBasedEntries);
+      
       setMealEntries(mealEntries);
+      
+      // Calculate and update total calories
+      const newTotalCalories = mealEntries.reduce((total, entry) => total + entry.calories, 0);
+      setTotalCalories(newTotalCalories);
+      
+      // Calculate and update total water intake
+      const newTotalWater = mealEntries.reduce((total, entry) => total + (entry.waterIntake || 0), 0);
+      setTotalWaterIntake(newTotalWater);
     } catch (error) {
       console.error('Error loading meal entries:', error);
+      setMealEntries([]);
+      setTotalCalories(0);
+      setTotalWaterIntake(0);
     } finally {
       setLoading(false);
     }
@@ -791,23 +885,33 @@ export default function DashboardPage() {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       
-      const q = query(
-        collection(db, 'food_entries'),
-        where('userId', '==', userId),
-        where('date', '>=', thirtyDaysAgo),
-        orderBy('date', 'desc'),
-        limit(50) // Limit to 50 recent entries
-      );
+      // Query food entries from the last 30 days
+      const allEntries = await dbProvider.queryDocuments('food_entries', [
+        { field: 'userId', operator: '==', value: userId }
+      ]);
       
-      const querySnapshot = await getDocs(q);
+      console.log(`Found ${allEntries.length} total entries for recent meals`);
+      
+      // Filter entries from the last 30 days and sort by date (most recent first)
+      const recentEntries = allEntries
+        .filter(entry => {
+          const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date);
+          return entryDate >= thirtyDaysAgo;
+        })
+        .sort((a, b) => {
+          const dateA = a.date instanceof Date ? a.date : new Date(a.date);
+          const dateB = b.date instanceof Date ? b.date : new Date(b.date);
+          return dateB.getTime() - dateA.getTime();
+        })
+        .slice(0, 50); // Limit to 50 recent entries
       
       // Process entries to create unique food suggestions
       const mealMap = new Map<string, FoodSuggestion>();
       
-      querySnapshot.docs.forEach(doc => {
-        const data = doc.data();
+      recentEntries.forEach(doc => {
+        const data = doc;
         const name = data.name;
-        const type = data.type;
+        const type = data.type || 'custom';
         
         // Extract the base food name without count or meal type prefix
         let foodName = name;
@@ -830,7 +934,7 @@ export default function DashboardPage() {
           existing.frequency = (existing.frequency || 0) + 1;
           
           // Update last used date if this entry is more recent
-          const entryDate = data.date.toDate();
+          const entryDate = data.date instanceof Date ? data.date : new Date(data.date);
           if (!existing.lastUsed || entryDate > existing.lastUsed) {
             existing.lastUsed = entryDate;
           }
@@ -839,9 +943,9 @@ export default function DashboardPage() {
           mealMap.set(foodName.toLowerCase(), {
             name: foodName,
             calories: data.calories,
-            type: data.type,
+            type: data.type || 'custom',
             frequency: 1,
-            lastUsed: data.date.toDate()
+            lastUsed: data.date instanceof Date ? data.date : new Date(data.date)
           });
         }
       });
@@ -1291,8 +1395,8 @@ export default function DashboardPage() {
     if (!deleteId || !user) return;
     
     try {
-      // Delete the meal from Firestore
-      await deleteDoc(doc(db, 'food_entries', deleteId));
+      // Delete the meal using the provider
+      await dbProvider.deleteDocument('food_entries', deleteId);
       
       // Show success toast
       showToast('Meal deleted successfully');
@@ -1317,140 +1421,89 @@ export default function DashboardPage() {
 
   // Modified handleAddMeal to update recent meals after adding
   const handleAddMeal = async () => {
-    if (!user || !selectedMealType) return;
-
     try {
-      console.log("Adding meal with type:", selectedMealType);
-      
-      // Ensure we have a valid meal type name with proper capitalization
-      const mealTypeName = selectedMealType.charAt(0).toUpperCase() + selectedMealType.slice(1);
-      const mealType = selectedMealType === 'custom' ? (customMealType || 'Custom Meal') : selectedMealType;
-      console.log("Meal type:", mealType);
-      
-      // SIMPLIFIED: Create a basic meal with just the type if nothing else is provided
-      // Use properly capitalized meal type name if no food name is provided
-      const itemName = newMealName || mealTypeName;
-      console.log("Item name:", itemName);
-      
-      // Default calories based on meal type
-      const defaultCalories: Record<MealType, number> = {
-        coffee: 100,
-        breakfast: 400,
-        lunch: 600,
-        snacks: 200,
-        dinner: 500,
-        custom: 300
-      };
-      
-      // Calculate calories - simplified to use defaults if needed
-      let calculatedCalories = defaultCalories[selectedMealType as MealType];
-      
-      // Only try to calculate calories if a food name is provided
-      if (newMealName) {
-        // Calculate portion multiplier
-        let portionMultiplier = 1;
-        
-        // If a serving size is selected, use its multiplier
-        if (selectedServingSize && availableServingSizes[selectedServingSize]) {
-          portionMultiplier = availableServingSizes[selectedServingSize];
-          console.log("Using predefined serving size:", selectedServingSize, "multiplier:", portionMultiplier);
-        } 
-        // Otherwise use the manual portion size if provided
-        else if (portionSize && !isNaN(parseFloat(portionSize))) {
-          portionMultiplier = parseFloat(portionSize);
-          console.log("Using manual portion size:", portionMultiplier);
-        }
-        
-        // Try to calculate calories based on food name
-        const foodCalories = estimateCalories(itemName, portionMultiplier);
-        if (foodCalories > 0) {
-          calculatedCalories = foodCalories;
-        }
-        console.log("Calculated calories:", calculatedCalories);
-        
-        // If there's a description, check if it contains food items to add calories
-        if (newMealDescription) {
-          const words = newMealDescription.split(' ');
-          for (const word of words) {
-            const wordCalories = estimateCalories(word);
-            if (wordCalories > 0) {
-              calculatedCalories += wordCalories;
-              console.log("Added calories from description word:", word, wordCalories);
-            }
-          }
-        }
+      if (!user) {
+        showToast('Please log in to add meals', 'error');
+        return;
       }
       
-      // Format portion information for display
-      let portionInfo = '';
-      if (selectedServingSize) {
-        portionInfo = selectedServingSize;
-      } else if (portionSize && portionSize !== '1') {
-        portionInfo = `${portionSize}${portionUnit ? ' ' + portionUnit : ''}`;
+      console.log('Adding meal with type:', selectedMealType);
+      console.log('Meal type:', selectedMealType);
+      console.log('Item name:', newMealName || `${selectedMealType?.charAt(0).toUpperCase()}${selectedMealType?.slice(1)}`);
+      
+      // Format meal data
+      const mealItems = newMealDescription ? newMealDescription.split(',').map(item => item.trim()) : [];
+      
+      if (mealItems.length === 0 && newMealName) {
+        mealItems.push(newMealName);
       }
       
-      // Create display name with portion info if available
-      const displayName = portionInfo ? `${itemName} (${portionInfo})` : itemName;
+      let finalCalories = parseInt(newMealCalories) || 0;
       
-      // Include meal type in the name if it's not already part of the name
-      const fullDisplayName = !itemName.toLowerCase().includes(mealType.toLowerCase()) 
-        ? `${mealTypeName}: ${displayName}`
-        : displayName;
+      // Apply portion size multiplier if provided
+      if (portionSize && portionSize !== '1') {
+        finalCalories = Math.round(finalCalories * parseFloat(portionSize));
+      }
       
-      console.log("Final display name:", fullDisplayName);
+      const displayName = newMealName || 
+        (selectedMealType ? `${selectedMealType.charAt(0).toUpperCase()}${selectedMealType.slice(1)}` : 'Meal');
+        
+      console.log('Final display name:', displayName);
       
-      // SIMPLIFIED: Create a minimal meal entry with required fields
-      const mealData: Omit<MealEntry, 'id'> = {
-        userId: user.uid,
-        date: currentDate,
-        name: fullDisplayName,
+      const date = new Date(currentDate);
+      
+      // Get the user ID, ensuring it works with both Firebase and Supabase auth
+      const userId = user.id || user.uid;
+      
+      if (!userId) {
+        console.error("No user ID available");
+        showToast('User ID not available. Please try logging in again.', 'error');
+        return;
+      }
+      
+      let mealData: any = {
+        userId: userId,
+        user_id: userId, // For Supabase compatibility
+        date: date,
+        name: displayName,
         time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        calories: Math.round(calculatedCalories),
-        items: [itemName], // Always include at least the meal type
+        calories: finalCalories,
+        items: mealItems.length > 0 ? mealItems : [displayName],
         completed: true,
-        type: selectedMealType as MealType,
-        count: 1,
-        lastUpdated: new Date()
+        type: selectedMealType || 'custom'
       };
       
-      // Only add optional fields if they have values
+      // Add water intake if provided
+      if (newMealWaterIntake && parseInt(newMealWaterIntake) > 0) {
+        mealData.waterIntake = parseInt(newMealWaterIntake);
+        mealData.water_intake = parseInt(newMealWaterIntake); // For Supabase compatibility
+      }
+      
+      // Add description if provided
       if (newMealDescription) {
         mealData.description = newMealDescription;
       }
       
-      if (newMealWaterIntake) {
-        mealData.waterIntake = parseInt(newMealWaterIntake);
-      } else if (selectedMealType === 'coffee') {
-        // Default water intake for coffee
-        mealData.waterIntake = 250;
-      }
-
-      console.log("Saving meal data:", mealData);
-
-      if (editingMeal) {
-        // Update existing meal but preserve the count
-        const updatedData = {
-          ...mealData,
-          count: editingMeal.count || 1 // Preserve the existing count
-        };
-        
-        await updateDoc(doc(db, 'food_entries', editingMeal.id), updatedData);
-        setEditingMeal(null);
-        showToast(`${mealTypeName} updated successfully`);
-      } else {
-        // Add new meal
-        await addDoc(collection(db, 'food_entries'), mealData);
-        showToast(`${mealTypeName} added successfully`);
+      // Format dates for Supabase
+      if (date instanceof Date) {
+        mealData.date = date.toISOString().split('T')[0]; // Format as YYYY-MM-DD
       }
       
-      // Refresh the meal entries
-      await loadMealEntries(user.uid);
+      console.log('Saving meal data:', mealData);
       
-      // Refresh recent meals for suggestions
-      await loadRecentMeals(user.uid);
+      // Add to database
+      const docId = await dbProvider.createDocument('food_entries', mealData);
+      console.log('Document written with ID: ', docId);
       
+      // Reset form
       setShowAddMealModal(false);
       resetForm();
+      
+      // Reload entries
+      await loadMealEntries(userId);
+      
+      // Show success message
+      showToast(`${displayName} added successfully`);
     } catch (error) {
       console.error('Error adding/updating meal:', error);
       showToast('Failed to add meal. Please try again.', 'error');
@@ -1483,17 +1536,21 @@ export default function DashboardPage() {
     setShowAddMealModal(false)
   }
   
-  // Function to quickly add a meal with minimal information
+  // Function to quickly add a preset meal
   const handleQuickAddMeal = async (type: MealType) => {
-    if (!user) return
-    
     try {
-      console.log("Quick adding meal of type:", type);
+      // Check if user is authenticated
+      if (!user) {
+        showToast('Please log in to add meals', 'error');
+        return;
+      }
       
-      // Create a default meal name based on type
-      const mealName = type.charAt(0).toUpperCase() + type.slice(1);
+      const now = new Date();
       
-      // Get default calories for this meal type
+      // Map type to meal name with proper capitalization
+      let mealName = '';
+      
+      // Default calories based on meal type
       const defaultCalories: Record<MealType, number> = {
         coffee: 100,
         breakfast: 400,
@@ -1503,74 +1560,70 @@ export default function DashboardPage() {
         custom: 300
       };
       
-      // Find entries of the same type from today
-      const sameTypeMeals = mealEntries.filter(entry => 
-        entry.type === type && 
-        entry.date.toDateString() === currentDate.toDateString()
-      );
-      
-      // Sort by most recent first
-      sameTypeMeals.sort((a, b) => {
-        const aTime = a.lastUpdated || new Date(a.date);
-        const bTime = b.lastUpdated || new Date(b.date);
-        return bTime.getTime() - aTime.getTime();
-      });
-      
-      const now = new Date();
-      
-      // Check if there's any existing entry of this type today
-      if (sameTypeMeals.length > 0) {
-        // Update the most recent entry instead of creating a new one
-        const recentMeal = sameTypeMeals[0];
-        console.log("Found existing meal to update:", recentMeal);
-        
-        // Increment the count or set to 2 if it doesn't exist
-        const newCount = (recentMeal.count || 1) + 1;
-        
-        // Calculate new calories based on count
-        const newCalories = defaultCalories[type] * newCount;
-        
-        // Update the meal
-        await updateDoc(doc(db, 'food_entries', recentMeal.id), {
-          count: newCount,
-          calories: newCalories,
-          lastUpdated: now
-        });
-        
-        // Show success message
-        showToast(`${mealName} updated (${newCount}x)`);
-      } else {
-        // Create a new meal entry
-        const mealData: Omit<MealEntry, 'id'> = {
-          userId: user.uid,
-          date: currentDate,
-          name: mealName,
-          time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          calories: defaultCalories[type],
-          items: [mealName],
-          completed: true,
-          type: type,
-          count: 1,
-          lastUpdated: now
-        };
-        
-        // Add water intake for coffee
-        if (type === 'coffee') {
-          mealData.waterIntake = 250;
-        }
-        
-        console.log("Creating new meal data:", mealData);
-        
-        // Add to Firestore
-        const docRef = await addDoc(collection(db, 'food_entries'), mealData);
-        console.log("Document written with ID: ", docRef.id);
-        
-        // Show a toast notification
-        showToast(`${mealName} added successfully`);
+      // Set meal name based on type
+      switch (type) {
+        case 'breakfast':
+          mealName = 'Breakfast';
+          break;
+        case 'lunch':
+          mealName = 'Lunch';
+          break;
+        case 'dinner':
+          mealName = 'Dinner';
+          break;
+        case 'snacks':
+          mealName = 'Snack';
+          break;
+        case 'coffee':
+          mealName = 'Coffee';
+          break;
+        default:
+          mealName = 'Meal';
       }
       
+      // Ensure we're using the correct user ID format
+      // First try the standard Supabase format, then fall back to Firebase format
+      const userId = user.id || user.uid;
+      
+      if (!userId) {
+        console.error("No user ID available for meal creation");
+        showToast('User ID not available. Please try logging in again.', 'error');
+        return;
+      }
+      
+      console.log("Using user ID for meal creation:", userId);
+      
+      // Format data for database storage
+      const mealData: any = {
+        user_id: userId,
+        date: currentDate.toISOString().split('T')[0], // Store as YYYY-MM-DD for Supabase
+        name: mealName,
+        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        calories: defaultCalories[type],
+        items: [mealName],
+        completed: true,
+        type: type,
+        count: 1,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString() 
+      };
+      
+      // Add water intake for coffee
+      if (type === 'coffee') {
+        mealData.water_intake = 250;
+      }
+      
+      console.log("Creating new meal data:", mealData);
+      
+      // Add to database using provider
+      const docId = await dbProvider.createDocument('food_entries', mealData);
+      console.log("Document written with ID: ", docId);
+      
+      // Show a toast notification
+      showToast(`${mealName} added successfully`);
+      
       // Refresh the meal entries
-      await loadMealEntries(user.uid);
+      await loadMealEntries(userId);
     } catch (error) {
       console.error('Error quick-adding meal:', error);
       showToast('Failed to add meal. Please try again.', 'error');
@@ -1587,7 +1640,7 @@ export default function DashboardPage() {
       
       if (currentCount <= 1) {
         // If count is 1 or less, delete the meal
-        await deleteDoc(doc(db, 'food_entries', meal.id));
+        await dbProvider.deleteDocument('food_entries', meal.id);
         showToast(`${meal.type.charAt(0).toUpperCase() + meal.type.slice(1)} removed`);
       } else {
         // Otherwise decrease the count
@@ -1600,7 +1653,7 @@ export default function DashboardPage() {
         const newCalories = caloriesPerServing * newCount;
         
         // Update the meal
-        await updateDoc(doc(db, 'food_entries', meal.id), {
+        await dbProvider.updateDocument('food_entries', meal.id, {
           count: newCount,
           calories: newCalories,
           lastUpdated: new Date()
@@ -1609,8 +1662,16 @@ export default function DashboardPage() {
         showToast(`${meal.type.charAt(0).toUpperCase() + meal.type.slice(1)} updated (${newCount}x)`);
       }
       
+      // Get the user ID
+      const userId = user?.uid || user?.id;
+      
+      if (!userId) {
+        console.error("No user ID available");
+        return;
+      }
+      
       // Refresh the meal entries
-      await loadMealEntries(user.uid);
+      await loadMealEntries(userId);
     } catch (error) {
       console.error('Error decreasing meal count:', error);
       showToast('Failed to update meal. Please try again.', 'error');
@@ -1683,14 +1744,22 @@ export default function DashboardPage() {
     try {
       if (!user) throw new Error('No user found')
       
-      await acceptConnection(connectionId, user.uid)
+      await acceptConnection(connectionId)
+      
+      // Get the user ID
+      const userId = user?.uid || user?.id;
+      
+      if (!userId) {
+        console.error("No user ID available");
+        return;
+      }
       
       // Refresh connections
-      const updatedConnections = await getUserConnections(user.uid)
+      const updatedConnections = await getUserConnections(userId)
       setConnections(updatedConnections as Connection[])
       
       // Refresh notifications
-      const updatedNotifications = await getUserNotifications(user.uid)
+      const updatedNotifications = await getUserNotifications(userId)
       setNotifications(updatedNotifications)
     } catch (error) {
       console.error('Error accepting connection:', error)
@@ -1704,12 +1773,20 @@ export default function DashboardPage() {
       
       await rejectConnection(connectionId)
       
+      // Get the user ID
+      const userId = user?.uid || user?.id;
+      
+      if (!userId) {
+        console.error("No user ID available");
+        return;
+      }
+      
       // Refresh connections
-      const updatedConnections = await getUserConnections(user.uid)
+      const updatedConnections = await getUserConnections(userId)
       setConnections(updatedConnections as Connection[])
       
       // Refresh notifications
-      const updatedNotifications = await getUserNotifications(user.uid)
+      const updatedNotifications = await getUserNotifications(userId)
       setNotifications(updatedNotifications)
     } catch (error) {
       console.error('Error rejecting connection:', error)
@@ -1719,10 +1796,11 @@ export default function DashboardPage() {
   // Handle marking a notification as read
   const handleMarkNotificationAsRead = async (notificationId: string) => {
     try {
-      await markNotificationAsRead(notificationId)
-      
-      // Refresh notifications
-      if (user) {
+      if (user?.uid) {
+        // Mark notification as read in database
+        await markNotificationAsRead(notificationId)
+        
+        // Update local state
         const updatedNotifications = await getUserNotifications(user.uid)
         setNotifications(updatedNotifications)
       }
@@ -1730,9 +1808,6 @@ export default function DashboardPage() {
       console.error('Error marking notification as read:', error)
     }
   }
-  
-  // Calculate total calories for the day
-  const totalCalories = mealEntries.reduce((sum, entry) => sum + entry.calories, 0)
   
   // Get accepted connections
   const acceptedConnections = connections.filter(conn => conn.status === 'accepted')
@@ -1786,6 +1861,54 @@ export default function DashboardPage() {
     showToast(error, 'error');
   };
   
+  // Handle adding a new connection
+  const handleAddConnection = async () => {
+    // Validate inputs
+    if (!connectionEmail.trim()) {
+      setConnectionError('Email is required');
+      setShowAddConnectionModal(true);
+      return;
+    }
+    
+    // Check if this is a valid email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(connectionEmail)) {
+      setConnectionError('Please enter a valid email address');
+      setShowAddConnectionModal(true);
+      return;
+    }
+    
+    try {
+      if (!user) return;
+      
+      // Get the user ID
+      const userId = user?.uid || user?.id;
+      
+      if (!userId) {
+        console.error("No user ID available");
+        return;
+      }
+      
+      // Create connection request
+      await createConnectionRequest(userId, connectionEmail);
+      
+      // Show success toast
+      showToast('Connection request sent!', 'success');
+      
+      // Refresh connections
+      const updatedConnections = await getUserConnections(userId);
+      setConnections(updatedConnections as Connection[]);
+      
+      // Reset email
+      setConnectionEmail('');
+    } catch (error: any) {
+      console.error('Error adding connection:', error);
+      showToast('Failed to add connection', 'error');
+      setConnectionError(error.message || 'Failed to add connection. Please try again.');
+      setShowAddConnectionModal(true);
+    }
+  };
+  
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -1828,212 +1951,233 @@ export default function DashboardPage() {
       )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Date Navigation and View Selector */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6">
-          <div className="flex items-center space-x-4 mb-4 sm:mb-0">
-            <button
-              onClick={() => moveDate(-1)}
-              className="p-2 rounded-full hover:bg-gray-100"
-            >
-              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <div className="text-2xl font-bold text-gray-900">
-              {formatDate(currentDate)}
-            </div>
-            <button
-              onClick={() => moveDate(1)}
-              className="p-2 rounded-full hover:bg-gray-100"
-            >
-              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-8">Food Dashboard</h1>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+          {/* Main Food Tracking Content - Takes 3/4 of screen on large devices */}
+          <div className="lg:col-span-3">
+            {/* Date Navigation and View Selector */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6">
+              <div className="flex items-center space-x-4 mb-4 sm:mb-0">
+                <button
+                  onClick={() => moveDate(-1)}
+                  className="p-2 rounded-full hover:bg-gray-100"
+                >
+                  <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <div className="text-2xl font-bold text-gray-900">
+                  {formatDate(currentDate)}
+                </div>
+                <button
+                  onClick={() => moveDate(1)}
+                  className="p-2 rounded-full hover:bg-gray-100"
+                >
+                  <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
 
-          <div className="relative">
-            <button 
-              className="flex items-center space-x-2 bg-white rounded-lg shadow-sm p-3 w-full sm:w-auto justify-between"
-              onClick={() => document.getElementById('view-dropdown')?.classList.toggle('hidden')}
-            >
-              <span className="font-medium text-gray-700">View: {view.charAt(0).toUpperCase() + view.slice(1)}</span>
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
+              <div className="relative">
+                <button 
+                  className="flex items-center space-x-2 bg-white rounded-lg shadow-sm p-3 w-full sm:w-auto justify-between"
+                  onClick={() => document.getElementById('view-dropdown')?.classList.toggle('hidden')}
+                >
+                  <span className="font-medium text-gray-700">View: {view.charAt(0).toUpperCase() + view.slice(1)}</span>
+                  <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                <div id="view-dropdown" className="hidden absolute right-0 z-10 mt-2 bg-white rounded-md shadow-lg border border-gray-200 w-full sm:w-40">
+                  <div 
+                    className={`p-3 cursor-pointer ${view === 'day' ? 'bg-primary-100 text-primary-700 font-medium' : 'hover:bg-gray-100 text-gray-700'}`}
+                    onClick={() => {
+                      setView('day');
+                      document.getElementById('view-dropdown')?.classList.add('hidden');
+                    }}
+                  >
+                    Day
+                  </div>
+                  <div 
+                    className={`p-3 cursor-pointer ${view === 'week' ? 'bg-primary-100 text-primary-700 font-medium' : 'hover:bg-gray-100 text-gray-700'}`}
+                    onClick={() => {
+                      setView('week');
+                      document.getElementById('view-dropdown')?.classList.add('hidden');
+                    }}
+                  >
+                    Week
+                  </div>
+                  <div 
+                    className={`p-3 cursor-pointer ${view === 'month' ? 'bg-primary-100 text-primary-700 font-medium' : 'hover:bg-gray-100 text-gray-700'}`}
+                    onClick={() => {
+                      setView('month');
+                      document.getElementById('view-dropdown')?.classList.add('hidden');
+                    }}
+                  >
+                    Month
+                  </div>
+                </div>
+              </div>
+            </div>
             
-            <div id="view-dropdown" className="hidden absolute right-0 z-10 mt-2 bg-white rounded-md shadow-lg border border-gray-200 w-full sm:w-40">
-              <div 
-                className={`p-3 cursor-pointer ${view === 'day' ? 'bg-primary-100 text-primary-700 font-medium' : 'hover:bg-gray-100 text-gray-700'}`}
-                onClick={() => {
+            {/* Stats Dashboard */}
+            <DashboardStats 
+              totalCalories={stats.totalCalories}
+              caloriesByType={stats.caloriesByType}
+              totalWaterIntake={stats.totalWaterIntake}
+              avgDailyCalories={stats.avgDailyCalories}
+              daysInPeriod={stats.daysInPeriod}
+              period={view}
+            />
+            
+            {/* Week View */}
+            {view === 'week' && (
+              <WeekCalendar 
+                currentDate={currentDate}
+                mealEntries={mealEntries}
+                onSelectDate={(date) => {
+                  setCurrentDate(date);
                   setView('day');
-                  document.getElementById('view-dropdown')?.classList.add('hidden');
                 }}
-              >
-                Day
-              </div>
-              <div 
-                className={`p-3 cursor-pointer ${view === 'week' ? 'bg-primary-100 text-primary-700 font-medium' : 'hover:bg-gray-100 text-gray-700'}`}
-                onClick={() => {
-                  setView('week');
-                  document.getElementById('view-dropdown')?.classList.add('hidden');
+                onNavigateWeek={navigateWeek}
+              />
+            )}
+            
+            {/* Calendar View (Month) */}
+            {view === 'month' && (
+              <MonthCalendar 
+                currentDate={currentDate}
+                mealEntries={mealEntries}
+                onSelectDate={(date) => {
+                  setCurrentDate(date);
+                  setView('day');
                 }}
-              >
-                Week
+                onNavigateMonth={navigateMonth}
+              />
+            )}
+
+            {/* Meal Type Color Legend */}
+            {view === 'day' && mealEntries.length > 0 && (
+              <div className="bg-white rounded-lg shadow p-4 mb-4">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Meal Types</h3>
+                <div className="flex flex-wrap gap-3">
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-yellow-500 rounded-full mr-1"></div>
+                    <span className="text-xs text-gray-600">Breakfast</span>
+                  </div>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-green-500 rounded-full mr-1"></div>
+                    <span className="text-xs text-gray-600">Lunch</span>
+                  </div>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-blue-500 rounded-full mr-1"></div>
+                    <span className="text-xs text-gray-600">Dinner</span>
+                  </div>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-purple-500 rounded-full mr-1"></div>
+                    <span className="text-xs text-gray-600">Snacks</span>
+                  </div>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-amber-700 rounded-full mr-1"></div>
+                    <span className="text-xs text-gray-600">Coffee</span>
+                  </div>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-gray-500 rounded-full mr-1"></div>
+                    <span className="text-xs text-gray-600">Custom</span>
+                  </div>
+                </div>
               </div>
-              <div 
-                className={`p-3 cursor-pointer ${view === 'month' ? 'bg-primary-100 text-primary-700 font-medium' : 'hover:bg-gray-100 text-gray-700'}`}
-                onClick={() => {
-                  setView('month');
-                  document.getElementById('view-dropdown')?.classList.add('hidden');
-                }}
-              >
-                Month
+            )}
+
+            {/* Meal Type Buttons */}
+            {view === 'day' && (
+              <div className="bg-white rounded-lg shadow p-4 mb-8">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+                  {['breakfast', 'lunch', 'dinner', 'snacks', 'coffee', 'custom'].map((type) => (
+                    <div key={type} className="flex flex-col space-y-2">
+                      <button
+                        onMouseDown={() => handleMealButtonMouseDown(type as MealType)}
+                        onMouseUp={() => handleMealButtonMouseUp(type as MealType)}
+                        onTouchStart={() => handleMealButtonTouchStart(type as MealType)}
+                        onTouchEnd={() => handleMealButtonTouchEnd(type as MealType)}
+                        className={`w-full py-3 px-3 rounded-lg hover:bg-opacity-90 focus:outline-none focus:ring-2 focus:ring-opacity-50 uppercase text-white font-medium ${
+                          type === 'breakfast' ? 'bg-yellow-500 focus:ring-yellow-500' :
+                          type === 'lunch' ? 'bg-green-500 focus:ring-green-500' :
+                          type === 'dinner' ? 'bg-blue-500 focus:ring-blue-500' :
+                          type === 'snacks' ? 'bg-purple-500 focus:ring-purple-500' :
+                          type === 'coffee' ? 'bg-amber-700 focus:ring-amber-700' :
+                          'bg-gray-500 focus:ring-gray-500'
+                        }`}
+                      >
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
+                      </button>
+                      
+                      {/* Camera button for photo upload */}
+                      <button
+                        onClick={() => handlePhotoUpload(type as MealType)}
+                        className={`w-full py-1 px-2 rounded-lg text-xs bg-gray-100 hover:bg-gray-200 focus:outline-none focus:ring-1 focus:ring-opacity-50 flex items-center justify-center ${
+                          type === 'breakfast' ? 'text-yellow-700 focus:ring-yellow-500' :
+                          type === 'lunch' ? 'text-green-700 focus:ring-green-500' :
+                          type === 'dinner' ? 'text-blue-700 focus:ring-blue-500' :
+                          type === 'snacks' ? 'text-purple-700 focus:ring-purple-500' :
+                          type === 'coffee' ? 'text-amber-700 focus:ring-amber-700' :
+                          'text-gray-700 focus:ring-gray-500'
+                        }`}
+                      >
+                        <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Photo
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
+            )}
+
+            {/* Meal Entries */}
+            {view === 'day' && (
+              <div className="space-y-4">
+                {mealEntries.length === 0 ? (
+                  <div className="bg-white rounded-lg shadow p-6 text-center">
+                    <p className="text-gray-500">No meals added yet.</p>
+                    <p className="text-gray-500 text-sm mt-2">Click or long-press on a meal type to add a meal.</p>
+                  </div>
+                ) : (
+                  mealEntries.map(entry => (
+                    <FoodEntryItem
+                      key={entry.id}
+                      entry={entry}
+                      onEdit={handleEditMeal}
+                      onDelete={(id) => confirmDeleteMeal(id)}
+                      onIncrease={(entry) => handleQuickAddMeal(entry.type)}
+                      onDecrease={handleDecreaseMealCount}
+                    />
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          
+          {/* Connections Sidebar - Takes 1/4 of screen on large devices, but shows on top for mobile */}
+          <div className="lg:col-span-1 order-first lg:order-last mb-6 lg:mb-0">
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              <div className="p-4 flex justify-between items-center border-b border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-900">Connections</h2>
+                <button 
+                  onClick={() => setShowAddConnectionModal(true)} 
+                  className="bg-primary-600 text-white text-sm px-3 py-1.5 rounded-md hover:bg-primary-700"
+                >
+                  Add New
+                </button>
+              </div>
+              <Connections />
             </div>
           </div>
         </div>
-        
-        {/* Stats Dashboard */}
-        <DashboardStats 
-          totalCalories={stats.totalCalories}
-          caloriesByType={stats.caloriesByType}
-          totalWaterIntake={stats.totalWaterIntake}
-          avgDailyCalories={stats.avgDailyCalories}
-          daysInPeriod={stats.daysInPeriod}
-          period={view}
-        />
-        
-        {/* Week View */}
-        {view === 'week' && (
-          <WeekCalendar 
-            currentDate={currentDate}
-            mealEntries={mealEntries}
-            onSelectDate={(date) => {
-              setCurrentDate(date);
-              setView('day');
-            }}
-            onNavigateWeek={navigateWeek}
-          />
-        )}
-        
-        {/* Calendar View (Month) */}
-        {view === 'month' && (
-          <MonthCalendar 
-            currentDate={currentDate}
-            mealEntries={mealEntries}
-            onSelectDate={(date) => {
-              setCurrentDate(date);
-              setView('day');
-            }}
-            onNavigateMonth={navigateMonth}
-          />
-        )}
-
-        {/* Meal Type Color Legend */}
-        {view === 'day' && mealEntries.length > 0 && (
-          <div className="bg-white rounded-lg shadow p-4 mb-4">
-            <h3 className="text-sm font-medium text-gray-700 mb-2">Meal Types</h3>
-            <div className="flex flex-wrap gap-3">
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-yellow-500 rounded-full mr-1"></div>
-                <span className="text-xs text-gray-600">Breakfast</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-green-500 rounded-full mr-1"></div>
-                <span className="text-xs text-gray-600">Lunch</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-blue-500 rounded-full mr-1"></div>
-                <span className="text-xs text-gray-600">Dinner</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-purple-500 rounded-full mr-1"></div>
-                <span className="text-xs text-gray-600">Snacks</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-amber-700 rounded-full mr-1"></div>
-                <span className="text-xs text-gray-600">Coffee</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-gray-500 rounded-full mr-1"></div>
-                <span className="text-xs text-gray-600">Custom</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Meal Type Buttons */}
-        {view === 'day' && (
-          <div className="bg-white rounded-lg shadow p-4 mb-8">
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
-              {['breakfast', 'lunch', 'dinner', 'snacks', 'coffee', 'custom'].map((type) => (
-                <div key={type} className="flex flex-col space-y-2">
-                  <button
-                    onMouseDown={() => handleMealButtonMouseDown(type as MealType)}
-                    onMouseUp={() => handleMealButtonMouseUp(type as MealType)}
-                    onTouchStart={() => handleMealButtonTouchStart(type as MealType)}
-                    onTouchEnd={() => handleMealButtonTouchEnd(type as MealType)}
-                    onClick={() => handleQuickAddMeal(type as MealType)}
-                    className={`w-full py-3 px-3 rounded-lg hover:bg-opacity-90 focus:outline-none focus:ring-2 focus:ring-opacity-50 uppercase text-white font-medium ${
-                      type === 'breakfast' ? 'bg-yellow-500 focus:ring-yellow-500' :
-                      type === 'lunch' ? 'bg-green-500 focus:ring-green-500' :
-                      type === 'dinner' ? 'bg-blue-500 focus:ring-blue-500' :
-                      type === 'snacks' ? 'bg-purple-500 focus:ring-purple-500' :
-                      type === 'coffee' ? 'bg-amber-700 focus:ring-amber-700' :
-                      'bg-gray-500 focus:ring-gray-500'
-                    }`}
-                  >
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
-                  </button>
-                  
-                  {/* Camera button for photo upload */}
-                  <button
-                    onClick={() => handlePhotoUpload(type as MealType)}
-                    className={`w-full py-1 px-2 rounded-lg text-xs bg-gray-100 hover:bg-gray-200 focus:outline-none focus:ring-1 focus:ring-opacity-50 flex items-center justify-center ${
-                      type === 'breakfast' ? 'text-yellow-700 focus:ring-yellow-500' :
-                      type === 'lunch' ? 'text-green-700 focus:ring-green-500' :
-                      type === 'dinner' ? 'text-blue-700 focus:ring-blue-500' :
-                      type === 'snacks' ? 'text-purple-700 focus:ring-purple-500' :
-                      type === 'coffee' ? 'text-amber-700 focus:ring-amber-700' :
-                      'text-gray-700 focus:ring-gray-500'
-                    }`}
-                  >
-                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    Photo
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Meal Entries */}
-        {view === 'day' && (
-          <div className="space-y-4">
-            {mealEntries.length === 0 ? (
-              <div className="bg-white rounded-lg shadow p-6 text-center">
-                <p className="text-gray-500">No meals added yet.</p>
-                <p className="text-gray-500 text-sm mt-2">Click or long-press on a meal type to add a meal.</p>
-              </div>
-            ) : (
-              mealEntries.map(entry => (
-                <FoodEntryItem
-                  key={entry.id}
-                  entry={entry}
-                  onEdit={handleEditMeal}
-                  onDelete={(id) => confirmDeleteMeal(id)}
-                  onIncrease={handleQuickAddMeal}
-                  onDecrease={handleDecreaseMealCount}
-                />
-              ))
-            )}
-          </div>
-        )}
       </main>
 
       {/* Add/Edit Meal Modal */}
@@ -2214,21 +2358,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Photo Uploader Modal */}
-      {showPhotoUploader && user && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-auto">
-            <FoodImageUploader 
-              userId={user.uid}
-              onSuccess={handlePhotoUploadSuccess}
-              onError={handlePhotoUploadError}
-              onCancel={() => setShowPhotoUploader(false)}
-              mealType={selectedMealType || undefined}
-            />
-          </div>
-        </div>
-      )}
-
       {/* Delete Confirmation Modal */}
       {showDeleteConfirmation && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -2257,10 +2386,66 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Add AccountSwitcher */}
-      <div className="fixed bottom-4 right-4 z-50">
-        <AccountSwitcher />
-      </div>
+      {/* Photo Uploader Modal */}
+      {showPhotoUploader && selectedMealType && user && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-auto">
+            <FoodImageUploader 
+              userId={user.id}
+              onSuccess={handlePhotoUploadSuccess}
+              onError={handlePhotoUploadError}
+              onCancel={() => setShowPhotoUploader(false)}
+              mealType={selectedMealType || undefined}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Add Connection Modal */}
+      {showAddConnectionModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">
+              Add Connection
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Enter the email of the person you want to connect with.
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Email <span className="text-xs text-gray-500">(required)</span>
+              </label>
+              <input
+                type="email"
+                value={connectionEmail}
+                onChange={(e) => setConnectionEmail(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900"
+                placeholder="Enter email"
+                required
+              />
+            </div>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowAddConnectionModal(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddConnectionModal(false);
+                  setConnectionError('');
+                  handleAddConnection();
+                }}
+                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
+              >
+                Add Connection
+              </button>
+            </div>
+            {connectionError && <p className="text-red-500 text-sm mt-2">{connectionError}</p>}
+          </div>
+        </div>
+      )}
     </div>
   )
 } 

@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { getCurrentUser, getUserProfile } from '../../../services/firebase'
-import { doc, updateDoc } from 'firebase/firestore'
-import { db } from '../../../services/firebase'
+import { useAuth } from '../../auth-provider'
+import * as dbProvider from '../../../services/db-provider'
 
 export default function ProfileSetupPage() {
   const router = useRouter()
+  const { user } = useAuth()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [formData, setFormData] = useState({
@@ -22,7 +22,6 @@ export default function ProfileSetupPage() {
 
   useEffect(() => {
     const checkAuth = async () => {
-      const user = getCurrentUser()
       if (!user) {
         router.push('/auth/login')
         return
@@ -30,7 +29,7 @@ export default function ProfileSetupPage() {
       setLoading(false)
     }
     checkAuth()
-  }, [router])
+  }, [router, user])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -38,26 +37,49 @@ export default function ProfileSetupPage() {
     setLoading(true)
 
     try {
-      const user = getCurrentUser()
       if (!user) throw new Error('No user found')
 
-      // Update user profile
-      await updateDoc(doc(db, 'users', user.uid), {
-        name: formData.name,
-        profile: {
-          age: parseInt(formData.age),
-          weight: parseFloat(formData.weight),
-          height: parseInt(formData.height),
+      console.log('Updating user profile with data:', {
+        display_name: formData.name,
+        user_info: {
+          age: parseInt(formData.age) || 0,
+          weight: parseFloat(formData.weight) || 0,
+          height: parseInt(formData.height) || 0,
           sex: formData.sex,
-          activityLevel: formData.activityLevel,
+          activity_level: formData.activityLevel,
           goal: formData.goal
         },
-        updatedAt: new Date()
-      })
+        settings: {
+          measurement_unit: 'metric',
+          calorie_goal: 2000,
+          water_goal: 2000
+        }
+      });
+
+      // Update user profile with correctly formatted data
+      const result = await dbProvider.updateDocument('users', user.id, {
+        display_name: formData.name,
+        user_info: {
+          age: parseInt(formData.age) || 0,
+          weight: parseFloat(formData.weight) || 0,
+          height: parseInt(formData.height) || 0,
+          sex: formData.sex,
+          activity_level: formData.activityLevel,
+          goal: formData.goal
+        },
+        settings: {
+          measurement_unit: 'metric',
+          calorie_goal: 2000,
+          water_goal: 2000
+        }
+      });
+
+      console.log('Profile update result:', result);
 
       // Redirect to dashboard
       router.push('/dashboard')
     } catch (err: any) {
+      console.error('Error updating profile:', err);
       setError(err.message || 'Failed to update profile')
       setLoading(false)
     }

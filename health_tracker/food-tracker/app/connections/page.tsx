@@ -2,39 +2,37 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { getCurrentUser } from '../../services/firebase'
+import { useAuth } from '../auth-provider'
 import Header from '../../components/Header'
 import AccountSwitcher from '../../components/AccountSwitcher'
 import { 
   Connection,
+  ConnectionWithRole,
   getUserConnections,
   createConnectionRequest,
-  updateConnectionStatus,
-  removeConnection
+  acceptConnection,
+  rejectConnection,
+  deleteConnection,
+  findUserByEmail
 } from '../../services/connectionService'
 
 type ConnectionUI = {
-  id: string;
+  id: string | undefined;
   name: string;
   email: string;
-  status: 'pending' | 'accepted' | 'rejected' | 'cancelled';
+  status: 'pending' | 'accepted' | 'rejected';
   lastUpdate: string;
-  lastMeal?: string;
-  caloriesTracked?: number;
   role: 'sender' | 'receiver';
 };
 
 export default function ConnectionsPage() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
   const [connections, setConnections] = useState<ConnectionUI[]>([]);
   const [viewTab, setViewTab] = useState<'all' | 'pending' | 'accepted' | 'rejected'>('all');
   const [error, setError] = useState('');
-  const [connectionName, setConnectionName] = useState('');
   const [connectionEmail, setConnectionEmail] = useState('');
   const [connectionError, setConnectionError] = useState('');
 
@@ -42,19 +40,15 @@ export default function ConnectionsPage() {
   useEffect(() => {
     // Check if user is logged in
     const checkAuth = async () => {
-      const currentUser = getCurrentUser();
-      
-      if (!currentUser) {
+      if (!user) {
         // Redirect to login if not authenticated
         router.push('/auth/login');
         return;
       }
       
-      setUser(currentUser);
-      
       try {
-        // Load connections from Firebase
-        loadConnections(currentUser);
+        // Load connections
+        loadConnections(user);
       } catch (error) {
         console.error('Error loading initial data:', error);
       } finally {
@@ -63,24 +57,26 @@ export default function ConnectionsPage() {
     };
     
     checkAuth();
-  }, [router]);
+  }, [router, user]);
 
   const loadConnections = async (currentUser: any) => {
     try {
-      const connectionsData = await getUserConnections(currentUser.uid);
+      if (!currentUser?.id) return;
+      
+      const connectionsData = await getUserConnections(currentUser.id);
       
       // Map connections to UI format
       const mappedConnections = connectionsData.map(conn => {
-        const isSender = conn.senderId === currentUser.uid;
+        const isSender = conn.userId === currentUser.id;
+        const connectedUser = conn.user || { name: '', email: '' };
+        
         return {
-          id: conn.id || '',
-          name: isSender ? conn.receiverName : conn.senderName,
-          email: isSender ? conn.receiverEmail : conn.senderEmail,
+          id: conn.id,
+          name: connectedUser.name || connectedUser.email || 'Unknown User',
+          email: connectedUser.email || '',
           status: conn.status,
-          lastUpdate: conn.updatedAt ? new Date(conn.updatedAt.seconds * 1000).toISOString()
+          lastUpdate: conn.createdAt ? new Date(conn.createdAt).toISOString() 
             : new Date().toISOString(),
-          lastMeal: conn.lastMeal,
-          caloriesTracked: conn.caloriesTracked,
           role: isSender ? 'sender' as const : 'receiver' as const
         };
       });
@@ -107,15 +103,18 @@ export default function ConnectionsPage() {
     }
     
     try {
-      if (!user) return;
+      if (!user?.id) return;
       
-      // Create connection request using the connection service
-      await createConnectionRequest(
-        user.uid,
-        user.email,
-        user.displayName || user.email.split('@')[0],
-        connectionEmail
-      );
+      // Find the user with the given email
+      const targetUser = await findUserByEmail(connectionEmail);
+      
+      if (!targetUser) {
+        setConnectionError('User not found. Make sure they have an account.');
+        return;
+      }
+      
+      // Create connection request
+      await createConnectionRequest(user.id, targetUser.id);
       
       // Refresh connections
       await loadConnections(user);
@@ -130,25 +129,17 @@ export default function ConnectionsPage() {
     }
   };
 
-  const handleResendRequest = async (id: string) => {
-    try {
-      // This would require a specialized function in connectionService
-      // For now, we'll just reload connections to simulate
-      if (!user) return;
-      
-      alert('Connection request resent');
-      await loadConnections(user);
-    } catch (error) {
-      console.error('Error resending request:', error);
+  const handleRemoveConnection = async (id: string | undefined) => {
+    if (!id) {
+      console.error('Cannot remove connection: ID is undefined');
+      return;
     }
-  };
-
-  const handleRemoveConnection = async (id: string) => {
+    
     try {
       if (!user) return;
       
-      // Remove connection in Firebase
-      await removeConnection(id, user.uid);
+      // Remove connection
+      await deleteConnection(id);
       
       // Update local state
       setConnections(connections.filter(c => c.id !== id));
@@ -157,12 +148,17 @@ export default function ConnectionsPage() {
     }
   };
   
-  const handleAcceptConnection = async (id: string) => {
+  const handleAcceptConnection = async (id: string | undefined) => {
+    if (!id) {
+      console.error('Cannot accept connection: ID is undefined');
+      return;
+    }
+    
     try {
       if (!user) return;
       
-      // Update connection status in Firebase
-      await updateConnectionStatus(id, 'accepted', user.uid);
+      // Accept the connection
+      await acceptConnection(id);
       
       // Update local state
       setConnections(connections.map(c => 
@@ -173,12 +169,17 @@ export default function ConnectionsPage() {
     }
   };
   
-  const handleRejectConnection = async (id: string) => {
+  const handleRejectConnection = async (id: string | undefined) => {
+    if (!id) {
+      console.error('Cannot reject connection: ID is undefined');
+      return;
+    }
+    
     try {
       if (!user) return;
       
-      // Update connection status in Firebase
-      await updateConnectionStatus(id, 'rejected', user.uid);
+      // Reject the connection
+      await rejectConnection(id);
       
       // Update local state
       setConnections(connections.map(c => 
@@ -189,7 +190,11 @@ export default function ConnectionsPage() {
     }
   };
 
-  const handleViewTracking = (id: string) => {
+  const handleViewTracking = (id: string | undefined) => {
+    if (!id) {
+      console.error('Cannot view tracking: ID is undefined');
+      return;
+    }
     router.push(`/connections/${id}`);
   };
   
@@ -308,7 +313,7 @@ export default function ConnectionsPage() {
               </li>
             ) : (
               filteredConnections.map((connection) => (
-                <li key={connection.id} className="px-4 py-4">
+                <li key={connection.id || 'unknown'} className="px-4 py-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-sm font-medium text-gray-900">
