@@ -4,15 +4,30 @@
  */
 
 import { format } from 'date-fns';
-import * as dbProvider from './db-provider';
+import { FoodEntry } from '../types/food';
+import { 
+  createDocument,
+  getDocument,
+  updateDocument,
+  deleteDocument,
+  queryDocuments,
+  getCurrentUser,
+  generateId,
+  Condition
+} from './db-provider';
 
-// Define allowed connection statuses
-export type ConnectionStatus = 'pending' | 'accepted' | 'rejected';
+export enum ConnectionStatus {
+  PENDING = 'pending',
+  ACCEPTED = 'accepted',
+  REJECTED = 'rejected'
+}
 
-// Define notification types
-export type NotificationType = 'connection_request' | 'connection_accepted' | 'meal_reminder';
+export enum NotificationType {
+  CONNECTION_REQUEST = 'connection_request',
+  CONNECTION_ACCEPTED = 'connection_accepted',
+  MEAL_REMINDER = 'meal_reminder'
+}
 
-// Interface for User objects
 export interface User {
   id: string;
   email: string;
@@ -20,52 +35,51 @@ export interface User {
   photoURL?: string;
 }
 
-// Interface for Connection objects
 export interface Connection {
   id: string;
   userId: string;
   connectedUserId: string;
   status: ConnectionStatus;
-  createdAt: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-// Connection with additional role information
 export interface ConnectionWithRole extends Connection {
-  user: User;
-  role: 'sender' | 'receiver';
+  role: 'requester' | 'receiver';
+  user?: User;
 }
 
-// Data structure for tracking connections
 export interface ConnectionTrackingData {
-  days: number;
-  totalEntries: number;
-  averageCalories: number;
-  streakDays: number;
+  userId: string;
+  connectedUserId: string;
+  startDate: Date;
+  endDate: Date;
+  foodEntries: FoodEntry[];
 }
 
-// Notification object structure
 export interface Notification {
   id: string;
   userId: string;
   type: NotificationType;
   message: string;
   read: boolean;
-  createdAt: string;
   data?: any;
+  createdAt: Date;
 }
 
 /**
- * Finds a user by email
- * @param email Email to search for
- * @returns User object if found, null if not found
+ * Find a user by email
+ * @param email The email to search for
+ * @returns The user if found, otherwise null
  */
 export const findUserByEmail = async (email: string): Promise<User | null> => {
   try {
-    const users = await dbProvider.queryDocuments('users', [
+    const conditions: Condition[] = [
       { field: 'email', operator: '==', value: email }
-    ]);
+    ];
     
-    return users.length > 0 ? users[0] as User : null;
+    const users = await queryDocuments('users', conditions) as User[];
+    return users.length > 0 ? users[0] : null;
   } catch (error) {
     console.error('Error finding user by email:', error);
     return null;
@@ -73,49 +87,77 @@ export const findUserByEmail = async (email: string): Promise<User | null> => {
 };
 
 /**
- * Creates a connection request between users
- * @param currentUserId ID of the user making the request
- * @param userToConnectId ID of the user to connect with
- * @returns ID of the created connection or null if failed
+ * Create a connection request
+ * @param userId The user ID of the requester
+ * @param connectedUserEmail The email of the user to connect with
+ * @returns The created connection if successful, otherwise null
  */
 export const createConnectionRequest = async (
-  currentUserId: string,
-  userToConnectId: string
-): Promise<string | null> => {
+  userId: string,
+  connectedUserEmail: string
+): Promise<Connection | null> => {
   try {
+    const connectedUser = await findUserByEmail(connectedUserEmail);
+    
+    if (!connectedUser) {
+      throw new Error('User not found');
+    }
+    
     // Check if connection already exists
-    const existingConnections = await dbProvider.queryDocuments('connections', [
-      { field: 'userId', operator: '==', value: currentUserId },
-      { field: 'connectedUserId', operator: '==', value: userToConnectId }
-    ]);
-
+    const existingConnectionConditions: Condition[] = [
+      { field: 'userId', operator: '==', value: userId },
+      { field: 'connectedUserId', operator: '==', value: connectedUser.id },
+    ];
+    
+    const existingConnections = await queryDocuments('connections', existingConnectionConditions) as Connection[];
+    
     if (existingConnections.length > 0) {
-      console.log('Connection already exists');
-      return null;
+      throw new Error('Connection already exists');
     }
-
+    
+    // Check if reverse connection exists
+    const reverseConnectionConditions: Condition[] = [
+      { field: 'userId', operator: '==', value: connectedUser.id },
+      { field: 'connectedUserId', operator: '==', value: userId },
+    ];
+    
+    const reverseConnections = await queryDocuments('connections', reverseConnectionConditions) as Connection[];
+    
+    if (reverseConnections.length > 0) {
+      throw new Error('Reverse connection already exists');
+    }
+    
     // Create connection
-    const connectionData = {
-      userId: currentUserId,
-      connectedUserId: userToConnectId,
-      status: 'pending' as ConnectionStatus,
-      createdAt: new Date().toISOString()
+    const now = new Date();
+    const connectionId = generateId();
+    
+    const connection: Connection = {
+      id: connectionId,
+      userId: userId,
+      connectedUserId: connectedUser.id,
+      status: ConnectionStatus.PENDING,
+      createdAt: now,
+      updatedAt: now,
     };
-
-    const connectionId = await dbProvider.createDocument('connections', connectionData);
-
-    // Create notification for the user being connected to
-    const currentUser = await dbProvider.getDocument('users', currentUserId);
+    
+    await createDocument('connections', connectionId, connection);
+    
+    // Create notification for the connected user
+    const currentUser = await getDocument('users', userId) as User;
+    
     if (currentUser) {
-      await createNotification(
-        userToConnectId,
-        'connection_request',
-        `${currentUser.name} sent you a connection request`,
-        { connectionId, userId: currentUserId }
-      );
+      await createNotification({
+        userId: connectedUser.id,
+        type: NotificationType.CONNECTION_REQUEST,
+        message: `${currentUser.name} sent you a connection request`,
+        data: {
+          connectionId: connectionId,
+          userId: userId
+        }
+      });
     }
-
-    return connectionId;
+    
+    return connection;
   } catch (error) {
     console.error('Error creating connection request:', error);
     return null;
@@ -123,46 +165,55 @@ export const createConnectionRequest = async (
 };
 
 /**
- * Gets all connections for a user
- * @param userId ID of the user to get connections for
- * @returns Array of connections with user details
+ * Get user connections
+ * @param userId The user ID
+ * @returns An array of connections with user data
  */
 export const getUserConnections = async (userId: string): Promise<ConnectionWithRole[]> => {
   try {
-    // Get connections where user is the requester
-    const requestedConnections = await dbProvider.queryDocuments('connections', [
+    // Get sent connections
+    const sentConnectionsConditions: Condition[] = [
       { field: 'userId', operator: '==', value: userId }
-    ]);
-
-    // Get connections where user is the receiver
-    const receivedConnections = await dbProvider.queryDocuments('connections', [
+    ];
+    
+    const sentConnections = await queryDocuments('connections', sentConnectionsConditions) as Connection[];
+    
+    // Get received connections
+    const receivedConnectionsConditions: Condition[] = [
       { field: 'connectedUserId', operator: '==', value: userId }
-    ]);
-
-    // Process and combine the connections
-    const processRequested = await Promise.all(
-      requestedConnections.map(async connection => {
-        const connectedUser = await dbProvider.getDocument('users', connection.connectedUserId);
+    ];
+    
+    const receivedConnections = await queryDocuments('connections', receivedConnectionsConditions) as Connection[];
+    
+    // Process sent connections
+    const sentConnectionsWithRole: ConnectionWithRole[] = await Promise.all(
+      sentConnections.map(async (connection) => {
+        const connectedUser = await getDocument('users', connection.connectedUserId) as User;
+        
         return {
           ...connection,
-          user: connectedUser,
-          role: 'sender' as const
+          role: 'requester',
+          user: connectedUser || undefined
         };
       })
     );
-
-    const processReceived = await Promise.all(
-      receivedConnections.map(async connection => {
-        const connectedUser = await dbProvider.getDocument('users', connection.userId);
+    
+    // Process received connections
+    const receivedConnectionsWithRole: ConnectionWithRole[] = await Promise.all(
+      receivedConnections.map(async (connection) => {
+        const connectedUser = await getDocument('users', connection.userId) as User;
+        
         return {
           ...connection,
-          user: connectedUser,
-          role: 'receiver' as const
+          role: 'receiver',
+          user: connectedUser || undefined
         };
       })
     );
-
-    return [...processRequested, ...processReceived];
+    
+    // Combine and sort by creation date (newest first)
+    return [...sentConnectionsWithRole, ...receivedConnectionsWithRole]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   } catch (error) {
     console.error('Error getting user connections:', error);
     return [];
@@ -170,28 +221,45 @@ export const getUserConnections = async (userId: string): Promise<ConnectionWith
 };
 
 /**
- * Accepts a connection request
- * @param connectionId ID of the connection to accept
- * @returns True if successful, false otherwise
+ * Accept a connection request
+ * @param connectionId The connection ID to accept
+ * @returns True if successful, otherwise false
  */
 export const acceptConnection = async (connectionId: string): Promise<boolean> => {
   try {
-    const connection = await dbProvider.getDocument('connections', connectionId);
-    if (!connection) return false;
-
-    await dbProvider.updateDocument('connections', connectionId, { status: 'accepted' });
-
-    // Create notification for the requester
-    const user = await dbProvider.getDocument('users', connection.connectedUserId);
-    if (user) {
-      await createNotification(
-        connection.userId,
-        'connection_accepted',
-        `${user.name} accepted your connection request`,
-        { connectionId }
-      );
+    const connection = await getDocument('connections', connectionId) as Connection;
+    
+    if (!connection) {
+      throw new Error('Connection not found');
     }
-
+    
+    if (connection.status !== ConnectionStatus.PENDING) {
+      throw new Error('Connection is not pending');
+    }
+    
+    // Update connection
+    const updatedConnection: Partial<Connection> = {
+      status: ConnectionStatus.ACCEPTED,
+      updatedAt: new Date()
+    };
+    
+    await updateDocument('connections', connectionId, updatedConnection);
+    
+    // Create notification for the connected user
+    const currentUser = await getDocument('users', connection.connectedUserId) as User;
+    
+    if (currentUser) {
+      await createNotification({
+        userId: connection.userId,
+        type: NotificationType.CONNECTION_ACCEPTED,
+        message: `${currentUser.name} accepted your connection request`,
+        data: {
+          connectionId: connectionId,
+          userId: connection.connectedUserId
+        }
+      });
+    }
+    
     return true;
   } catch (error) {
     console.error('Error accepting connection:', error);
@@ -200,13 +268,30 @@ export const acceptConnection = async (connectionId: string): Promise<boolean> =
 };
 
 /**
- * Rejects a connection request
- * @param connectionId ID of the connection to reject
- * @returns True if successful, false otherwise
+ * Reject a connection request
+ * @param connectionId The connection ID to reject
+ * @returns True if successful, otherwise false
  */
 export const rejectConnection = async (connectionId: string): Promise<boolean> => {
   try {
-    await dbProvider.updateDocument('connections', connectionId, { status: 'rejected' });
+    const connection = await getDocument('connections', connectionId) as Connection;
+    
+    if (!connection) {
+      throw new Error('Connection not found');
+    }
+    
+    if (connection.status !== ConnectionStatus.PENDING) {
+      throw new Error('Connection is not pending');
+    }
+    
+    // Update connection
+    const updatedConnection: Partial<Connection> = {
+      status: ConnectionStatus.REJECTED,
+      updatedAt: new Date()
+    };
+    
+    await updateDocument('connections', connectionId, updatedConnection);
+    
     return true;
   } catch (error) {
     console.error('Error rejecting connection:', error);
@@ -215,13 +300,13 @@ export const rejectConnection = async (connectionId: string): Promise<boolean> =
 };
 
 /**
- * Deletes a connection
- * @param connectionId ID of the connection to delete
- * @returns True if successful, false otherwise
+ * Delete a connection
+ * @param connectionId The connection ID to delete
+ * @returns True if successful, otherwise false
  */
 export const deleteConnection = async (connectionId: string): Promise<boolean> => {
   try {
-    await dbProvider.deleteDocument('connections', connectionId);
+    await deleteDocument('connections', connectionId);
     return true;
   } catch (error) {
     console.error('Error deleting connection:', error);
@@ -230,85 +315,115 @@ export const deleteConnection = async (connectionId: string): Promise<boolean> =
 };
 
 /**
- * Gets tracking data for a user's connections
- * @param userId ID of the user to get tracking data for
- * @returns Connection tracking data object
+ * Get connection tracking data
+ * @param userId The user ID
+ * @param connectedUserId The connected user ID
+ * @param startDate The start date
+ * @param endDate The end date
+ * @returns The connection tracking data
  */
-export const getConnectionTrackingData = async (userId: string): Promise<ConnectionTrackingData> => {
+export const getConnectionTrackingData = async (
+  userId: string,
+  connectedUserId: string,
+  startDate: Date,
+  endDate: Date
+): Promise<ConnectionTrackingData | null> => {
   try {
-    // Calculate the date for 30 days ago
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString();
-
-    // Get accepted connections
-    const connections = await dbProvider.queryDocuments('connections', [
-      { field: 'userId', operator: '==', value: userId },
-      { field: 'status', operator: '==', value: 'accepted' }
-    ]);
-
-    // Add connections where user is the receiver
-    const receiverConnections = await dbProvider.queryDocuments('connections', [
-      { field: 'connectedUserId', operator: '==', value: userId },
-      { field: 'status', operator: '==', value: 'accepted' }
-    ]);
-
-    const allConnections = [...connections, ...receiverConnections];
-
-    // Default return if no connections
-    if (allConnections.length === 0) {
-      return {
-        days: 0,
-        totalEntries: 0,
-        averageCalories: 0,
-        streakDays: 0
-      };
+    // Check if connection exists and is accepted
+    const connectionConditions: Condition[] = [
+      { 
+        field: 'userId', 
+        operator: '==', 
+        value: userId 
+      },
+      { 
+        field: 'connectedUserId', 
+        operator: '==', 
+        value: connectedUserId 
+      },
+      { 
+        field: 'status', 
+        operator: '==', 
+        value: ConnectionStatus.ACCEPTED 
+      }
+    ];
+    
+    const connections = await queryDocuments('connections', connectionConditions) as Connection[];
+    
+    if (connections.length === 0) {
+      // Check reverse connection
+      const reverseConnectionConditions: Condition[] = [
+        { 
+          field: 'userId', 
+          operator: '==', 
+          value: connectedUserId 
+        },
+        { 
+          field: 'connectedUserId', 
+          operator: '==', 
+          value: userId 
+        },
+        { 
+          field: 'status', 
+          operator: '==', 
+          value: ConnectionStatus.ACCEPTED 
+        }
+      ];
+      
+      const reverseConnections = await queryDocuments('connections', reverseConnectionConditions) as Connection[];
+      
+      if (reverseConnections.length === 0) {
+        throw new Error('Connection not found or not accepted');
+      }
     }
-
-    // For simplicity, just return mock data for now
-    // In a real implementation, you'd query food entries for all connections
+    
+    // Get food entries for connected user within date range
+    const foodEntryConditions: Condition[] = [
+      { field: 'userId', operator: '==', value: connectedUserId },
+      { field: 'date', operator: '>=', value: startDate },
+      { field: 'date', operator: '<=', value: endDate }
+    ];
+    
+    const foodEntries = await queryDocuments('foodEntries', foodEntryConditions) as FoodEntry[];
+    
     return {
-      days: 30,
-      totalEntries: 45,
-      averageCalories: 1850,
-      streakDays: 7
+      userId,
+      connectedUserId,
+      startDate,
+      endDate,
+      foodEntries
     };
   } catch (error) {
     console.error('Error getting connection tracking data:', error);
-    return {
-      days: 0,
-      totalEntries: 0,
-      averageCalories: 0,
-      streakDays: 0
-    };
+    return null;
   }
 };
 
 /**
- * Creates a notification for a user
- * @param userId ID of the user to create notification for
- * @param type Type of notification
- * @param message Notification message
- * @param data Optional additional data
- * @returns ID of created notification or null if failed
+ * Create a notification
+ * @param notification The notification to create
+ * @returns The created notification if successful, otherwise null
  */
 export const createNotification = async (
-  userId: string,
-  type: NotificationType,
-  message: string,
-  data?: any
-): Promise<string | null> => {
+  notification: Omit<Notification, 'id' | 'read' | 'createdAt'>
+): Promise<Notification | null> => {
   try {
-    const notification = {
-      userId,
-      type,
-      message,
+    const now = new Date();
+    const notificationId = generateId();
+    
+    const newNotification: Notification = {
+      id: notificationId,
+      userId: notification.userId,
+      type: notification.type,
+      message: notification.message,
       read: false,
-      createdAt: new Date().toISOString(),
-      data
+      data: notification.data,
+      createdAt: now
     };
-
-    return await dbProvider.createDocument('notifications', notification);
+    
+    await createDocument('notifications', notificationId, newNotification);
+    
+    return newNotification;
   } catch (error) {
     console.error('Error creating notification:', error);
     return null;
@@ -316,22 +431,20 @@ export const createNotification = async (
 };
 
 /**
- * Gets all notifications for a user
- * @param userId ID of the user to get notifications for
- * @returns Array of notifications
+ * Get user notifications
+ * @param userId The user ID
+ * @returns An array of notifications
  */
 export const getUserNotifications = async (userId: string): Promise<Notification[]> => {
   try {
-    // Get notifications
-    const notifications = await dbProvider.queryDocuments(
-      'notifications', 
-      [{ field: 'userId', operator: '==', value: userId }]
-    );
+    const conditions: Condition[] = [
+      { field: 'userId', operator: '==', value: userId }
+    ];
     
-    // Sort by createdAt in descending order (newest first)
-    return (notifications as Notification[]).sort((a, b) => {
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
+    const notifications = await queryDocuments('notifications', conditions) as Notification[];
+    
+    // Sort by creation date (newest first)
+    return notifications.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   } catch (error) {
     console.error('Error getting user notifications:', error);
     return [];
@@ -339,13 +452,13 @@ export const getUserNotifications = async (userId: string): Promise<Notification
 };
 
 /**
- * Marks a notification as read
- * @param notificationId ID of the notification to mark as read
- * @returns True if successful, false otherwise
+ * Mark a notification as read
+ * @param notificationId The notification ID to mark as read
+ * @returns True if successful, otherwise false
  */
 export const markNotificationAsRead = async (notificationId: string): Promise<boolean> => {
   try {
-    await dbProvider.updateDocument('notifications', notificationId, { read: true });
+    await updateDocument('notifications', notificationId, { read: true });
     return true;
   } catch (error) {
     console.error('Error marking notification as read:', error);
@@ -354,24 +467,23 @@ export const markNotificationAsRead = async (notificationId: string): Promise<bo
 };
 
 /**
- * Marks all notifications for a user as read
- * @param userId ID of the user to mark notifications as read for
- * @returns True if successful, false otherwise
+ * Mark all notifications as read
+ * @param userId The user ID
+ * @returns True if successful, otherwise false
  */
 export const markAllNotificationsAsRead = async (userId: string): Promise<boolean> => {
   try {
-    const notifications = await getUserNotifications(userId);
+    const conditions: Condition[] = [
+      { field: 'userId', operator: '==', value: userId },
+      { field: 'read', operator: '==', value: false }
+    ];
     
-    // Update each notification
+    const unreadNotifications = await queryDocuments('notifications', conditions) as Notification[];
+    
     await Promise.all(
-      notifications
-        .filter(notification => !notification.read)
-        .map(notification => {
-          if (notification.id) {
-            return dbProvider.updateDocument('notifications', notification.id, { read: true });
-          }
-          return Promise.resolve();
-        })
+      unreadNotifications.map(notification => 
+        updateDocument('notifications', notification.id, { read: true })
+      )
     );
     
     return true;

@@ -16,7 +16,7 @@ import * as dbProvider from '../../../services/db-provider'
 type UserData = {
   id: string;
   email: string;
-  name?: string;
+  displayName?: string;
   userInfo?: {
     age: number;
     sex: string;
@@ -108,7 +108,7 @@ export default function ConnectionDetailPage() {
         }
         
         // Get connected user data
-        const connectedUserId = connectionData.role === 'sender' 
+        const connectedUserId = connectionData.role === 'requester' 
           ? connectionData.connectedUserId 
           : connectionData.userId;
         
@@ -119,8 +119,15 @@ export default function ConnectionDetailPage() {
         }
         
         // Get basic tracking stats
-        const trackingData: ConnectionTrackingData = await getConnectionTrackingData(connectedUserId);
+        const today = new Date();
+        const startDate = new Date(today);
+        startDate.setDate(startDate.getDate() - 7); // Get data for the last 7 days
+        const trackingData = await getConnectionTrackingData(currentUser.uid, connectionId, startDate, today);
         console.log('Connection tracking data:', trackingData);
+        
+        if (!trackingData) {
+          throw new Error("Failed to get tracking data");
+        }
         
         // Get food entries for the connected user
         const foodEntries = await dbProvider.queryDocuments('food_entries', [
@@ -145,7 +152,7 @@ export default function ConnectionDetailPage() {
         // Set connection data
         setConnection({
           id: connectionId,
-          name: connectedUserData.name || connectedUserData.email.split('@')[0],
+          name: connectedUserData.displayName || connectedUserData.email.split('@')[0],
           email: connectedUserData.email,
           status: connectionData.status,
           lastUpdate: connectionData.createdAt ? 

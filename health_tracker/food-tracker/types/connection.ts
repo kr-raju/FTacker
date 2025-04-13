@@ -3,7 +3,11 @@
 /**
  * The possible states of a connection between users
  */
-export type ConnectionStatus = 'pending' | 'accepted' | 'rejected';
+export enum ConnectionStatus {
+  PENDING = 'pending',
+  ACCEPTED = 'accepted',
+  REJECTED = 'rejected'
+}
 
 /**
  * Basic user information
@@ -19,7 +23,7 @@ export interface User {
  * Represents a connection between two users
  */
 export interface Connection {
-  id?: string;
+  id: string;
   userId: string;
   connectedUserId: string;
   status: ConnectionStatus;
@@ -31,31 +35,38 @@ export interface Connection {
  * Connection with additional user role information
  */
 export interface ConnectionWithRole extends Connection {
+  role: 'requester' | 'receiver';
   user?: User;
-  role: 'sender' | 'receiver';
 }
 
 /**
  * Tracking data for connections
  */
 export interface ConnectionTrackingData {
-  userId: string;
-  connectedUserId: string;
-  startDate: Date;
-  endDate: Date;
-  foodEntries: any[]; // Could be refined to specific food entry type
+  userId?: string;
+  connectedUserId?: string;
+  startDate?: Date;
+  endDate?: Date;
+  foodEntries?: any[];
+  totalCalories: number;
+  mealCounts: Record<string, number>;
+  topFoods: Array<{ name: string; count: number }>;
 }
 
 /**
  * Type of notifications in the system
  */
-export type NotificationType = 'connection_request' | 'connection_accepted' | 'meal_reminder';
+export enum NotificationType {
+  CONNECTION_REQUEST = 'connection_request',
+  CONNECTION_ACCEPTED = 'connection_accepted',
+  MEAL_REMINDER = 'meal_reminder'
+}
 
 /**
  * Notification structure
  */
 export interface Notification {
-  id?: string;
+  id: string;
   userId: string;
   type: NotificationType;
   message: string;

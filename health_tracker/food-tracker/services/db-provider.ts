@@ -128,20 +128,53 @@ export const generateId = (): string => {
 };
 
 // Database functions
-export const createDocument = async (collection: string, data: any): Promise<any> => {
-  if (activeProvider === 'firebase') {
-    // For Firebase, we use Firestore's collection and addDoc
-    const { collection: firestoreCollection, addDoc } = await import('firebase/firestore');
-    const { db } = firebase;
-    const docRef = await addDoc(firestoreCollection(db, collection), {
-      ...data,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    });
-    return { id: docRef.id, ...data };
+export const createDocument = async (collection: string, idOrData?: string | any, data?: any): Promise<any> => {
+  // Determine if the second argument is an ID or data
+  let id: string | undefined;
+  let documentData: any;
+
+  if (typeof idOrData === 'string') {
+    // If idOrData is a string, it's an ID
+    id = idOrData;
+    documentData = data;
   } else {
-    // For Supabase, we use the equivalent function
-    return supabase.createDocument(collection, data);
+    // If idOrData is not a string, it's the data
+    documentData = idOrData;
+  }
+
+  if (activeProvider === 'firebase') {
+    // For Firebase, we use Firestore's collection and addDoc or setDoc
+    if (id) {
+      // If ID is provided, use setDoc
+      const { doc, setDoc } = await import('firebase/firestore');
+      const { db } = firebase;
+      const docRef = doc(db, collection, id);
+      await setDoc(docRef, {
+        ...documentData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      return { id, ...documentData };
+    } else {
+      // If no ID is provided, use addDoc
+      const { collection: firestoreCollection, addDoc } = await import('firebase/firestore');
+      const { db } = firebase;
+      const docRef = await addDoc(firestoreCollection(db, collection), {
+        ...documentData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      return { id: docRef.id, ...documentData };
+    }
+  } else {
+    // For Supabase, handle ID in the data if provided
+    if (id) {
+      // For Supabase with ID, use setDocument which handles IDs
+      return supabase.setDocument(collection, id, documentData);
+    } else {
+      // For Supabase without ID, use createDocument
+      return supabase.createDocument(collection, documentData);
+    }
   }
 };
 

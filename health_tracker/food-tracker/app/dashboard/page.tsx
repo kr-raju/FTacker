@@ -1846,13 +1846,68 @@ export default function DashboardPage() {
   };
   
   // Handle photo upload success
-  const handlePhotoUploadSuccess = (entryId: string) => {
+  const handlePhotoUploadSuccess = (entryId: string, entryData: any) => {
+    // User has clicked "Done" in the uploader component, so we can close it
     setShowPhotoUploader(false);
     showToast('Meal added from photo!', 'success');
     
-    // Reload meal entries
-    if (user?.uid) {
-      loadMealEntries(user.uid);
+    // Add the new entry directly to the UI without requiring a full reload
+    if (entryData) {
+      console.log("Adding new entry to UI:", entryData);
+      
+      // Process the entry data to match our UI format
+      const newEntry = {
+        id: entryId,
+        userId: entryData.userId || entryData.user_id,
+        date: new Date(entryData.date),
+        name: entryData.name,
+        time: entryData.time,
+        calories: entryData.calories || 0,
+        items: entryData.items || [entryData.name],
+        completed: true,
+        type: entryData.type,
+        description: entryData.description,
+        waterIntake: entryData.waterIntake || 0,
+        count: entryData.count || 1,
+        lastUpdated: new Date(),
+        imageId: entryData.imageId,
+        isFromImage: true,
+        // Add the image URL directly to avoid having to load it
+        imageUrl: entryData.imageUrl || entryData.thumbnailUrl
+      };
+      
+      // Add the new entry to the existing entries
+      setMealEntries(prevEntries => {
+        const updatedEntries = [...prevEntries, newEntry];
+        
+        // Sort entries by time
+        updatedEntries.sort((a, b) => {
+          try {
+            const timeA = new Date(`1970-01-01T${a.time}`).getTime();
+            const timeB = new Date(`1970-01-01T${b.time}`).getTime();
+            return timeA - timeB;
+          } catch (error) {
+            console.error("Error sorting entries by time:", error);
+            return 0;
+          }
+        });
+        
+        return updatedEntries;
+      });
+      
+      // Update calorie and water counts
+      setTotalCalories(prev => prev + (entryData.calories || 0));
+      if (entryData.waterIntake) {
+        setTotalWaterIntake(prev => prev + entryData.waterIntake);
+      }
+      
+      // We don't need to calculate stats here as they are calculated 
+      // from the current view later in the component
+    } else {
+      // Fall back to reloading entries from the database if no data was provided
+      if (user?.uid) {
+        loadMealEntries(user.uid);
+      }
     }
   };
   
@@ -1896,8 +1951,8 @@ export default function DashboardPage() {
       showToast('Connection request sent!', 'success');
       
       // Refresh connections
-      const updatedConnections = await getUserConnections(userId);
-      setConnections(updatedConnections as Connection[]);
+      const updatedConnections = await getUserConnections(userId)
+      setConnections(updatedConnections as Connection[])
       
       // Reset email
       setConnectionEmail('');

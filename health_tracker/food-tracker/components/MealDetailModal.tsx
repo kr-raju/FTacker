@@ -117,53 +117,128 @@ const MealDetailModal: React.FC<MealDetailModalProps> = ({
     }
   };
 
+  // Determine if meal is healthy (simplified logic)
+  const getMealHealthInfo = () => {
+    // Default values
+    let isHealthy = false;
+    let healthScore = 0;
+    let healthText = "Unknown";
+    let healthColor = "text-gray-500";
+    
+    if (analysisResult) {
+      // Simple health scoring logic based on calories and items
+      const calories = entry.calories || analysisResult.totalCalories || 0;
+      const hasVegetables = analysisResult.items?.some((item: any) => 
+        item.name.toLowerCase().includes('vegetable') || 
+        item.name.toLowerCase().includes('salad') ||
+        item.name.toLowerCase().includes('spinach') ||
+        item.name.toLowerCase().includes('broccoli')
+      );
+      
+      const hasFruits = analysisResult.items?.some((item: any) => 
+        item.name.toLowerCase().includes('fruit') || 
+        item.name.toLowerCase().includes('apple') ||
+        item.name.toLowerCase().includes('banana') ||
+        item.name.toLowerCase().includes('berry')
+      );
+      
+      const hasProcessedFood = analysisResult.items?.some((item: any) => 
+        item.name.toLowerCase().includes('fried') || 
+        item.name.toLowerCase().includes('processed') ||
+        item.name.toLowerCase().includes('pizza') ||
+        item.name.toLowerCase().includes('burger')
+      );
+      
+      // Calculate a simple health score
+      healthScore = 5; // Start at neutral
+      
+      // Adjust based on calories
+      if (calories < 300) healthScore += 1;
+      if (calories > 800) healthScore -= 2;
+      
+      // Adjust based on content
+      if (hasVegetables) healthScore += 2;
+      if (hasFruits) healthScore += 1;
+      if (hasProcessedFood) healthScore -= 2;
+      
+      // Determine health status based on score
+      if (healthScore >= 7) {
+        isHealthy = true;
+        healthText = "Very Healthy";
+        healthColor = "text-green-600";
+      } else if (healthScore >= 5) {
+        isHealthy = true;
+        healthText = "Healthy";
+        healthColor = "text-green-500";
+      } else if (healthScore >= 3) {
+        healthText = "Moderately Healthy";
+        healthColor = "text-yellow-500";
+      } else {
+        healthText = "Less Healthy";
+        healthColor = "text-red-500";
+      }
+    }
+    
+    return { isHealthy, healthText, healthColor, healthScore };
+  };
+
+  const { healthText, healthColor } = getMealHealthInfo();
+
   return (
     <>
       <div 
-        className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+        className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4 overflow-y-auto"
         onClick={onClose}
       >
         <div 
-          className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden"
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8 relative"
           onClick={(e) => e.stopPropagation()}
+          style={{ maxHeight: '90vh', overflowY: 'auto' }}
         >
-          {/* Header */}
-          <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-            <h2 className="text-xl font-bold">
-              <span className={`inline-block w-3 h-3 rounded-full ${getTypeColor()} mr-2`}></span>
-              Meal Details
-            </h2>
-            <button 
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-500"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+          <div className="sticky top-0 z-10 bg-white border-b border-gray-100 rounded-t-2xl">
+            {/* Header with gradient */}
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 rounded-t-2xl flex justify-between items-center">
+              <div>
+                <div className="text-xs uppercase tracking-wider opacity-75 mb-1">
+                  {formatDate(entry.date)} • {entry.time}
+                </div>
+                <h2 className="text-2xl font-bold flex items-center">
+                  {entry.name}
+                  {entry.count && entry.count > 1 && (
+                    <span className="ml-2 bg-white bg-opacity-25 text-white px-2 py-0.5 rounded-full text-sm">
+                      x{entry.count}
+                    </span>
+                  )}
+                </h2>
+              </div>
+              <button 
+                onClick={onClose}
+                className="text-white hover:text-gray-200 transition-colors"
+                aria-label="Close"
+              >
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          
+            {/* Health status badge */}
+            {healthText && (
+              <div className="flex justify-end -mt-4 px-6">
+                <span className={`${healthColor} font-semibold bg-white py-1 px-4 rounded-full shadow text-sm border border-gray-100`}>
+                  {healthText}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Content */}
-          <div className="p-4">
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-xl font-semibold text-gray-800">{entry.name}</h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  {formatDate(entry.date)} • {entry.time}
-                </p>
-              </div>
-              {entry.count && entry.count > 1 && (
-                <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium">
-                  x{entry.count}
-                </span>
-              )}
-            </div>
-
+          <div className="p-6">
             {/* Image (if available) */}
             {imageUrl && (
-              <div className="mb-4">
+              <div className="mb-6">
                 <div 
-                  className="w-full h-48 rounded-lg overflow-hidden bg-gray-100 cursor-pointer"
+                  className="w-full h-60 rounded-xl overflow-hidden bg-gray-100 cursor-pointer shadow-md hover:shadow-lg transition-shadow duration-200"
                   onClick={() => setShowFullImage(true)}
                 >
                   <img 
@@ -172,89 +247,102 @@ const MealDetailModal: React.FC<MealDetailModalProps> = ({
                     className="w-full h-full object-cover" 
                   />
                 </div>
-                {entry.isFromImage && (
-                  <div className="flex justify-end mt-1">
-                    <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                <div className="flex justify-end mt-2">
+                  {entry.isFromImage && (
+                    <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full font-medium">
                       AI analyzed
                     </span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Basic Information */}
-            <div className="mb-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <h4 className="text-sm font-medium text-gray-500">Calories</h4>
-                  <p className="text-lg font-semibold text-gray-800">{entry.calories}</p>
-                </div>
-                {entry.waterIntake && entry.waterIntake > 0 && (
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <h4 className="text-sm font-medium text-gray-500">Water</h4>
-                    <p className="text-lg font-semibold text-gray-800">{entry.waterIntake} ml</p>
-                  </div>
-                )}
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <h4 className="text-sm font-medium text-gray-500">Meal Type</h4>
-                  <p className="text-lg font-semibold text-gray-800 capitalize">{entry.type}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Description */}
-            {entry.description && (
-              <div className="mb-4">
-                <h4 className="text-sm font-medium text-gray-500 mb-1">Description</h4>
-                <p className="text-gray-700">{entry.description}</p>
-              </div>
-            )}
-
-            {/* Analyzed Items (if available from AI) */}
-            {analysisResult && (
-              <div className="mb-4">
-                <h4 className="text-sm font-medium text-gray-500 mb-2">Analyzed Items</h4>
-                <div className="bg-gray-50 rounded-lg p-3">
-                  {analysisResult.items && analysisResult.items.length > 0 ? (
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left text-gray-500 border-b border-gray-200">
-                          <th className="pb-2">Item</th>
-                          <th className="pb-2">Portion</th>
-                          <th className="pb-2 text-right">Calories</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {analysisResult.items.map((item: any, index: number) => (
-                          <tr key={index} className="border-b border-gray-100 last:border-0">
-                            <td className="py-2">{item.name}</td>
-                            <td className="py-2">{item.portion || '-'}</td>
-                            <td className="py-2 text-right">{item.calories}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className="text-gray-500 text-center py-2">
-                      No detailed analysis available
-                    </div>
                   )}
                 </div>
               </div>
             )}
 
+            {/* Stats cards */}
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-xl shadow-sm flex flex-col items-center justify-center">
+                <div className="text-xs text-blue-500 uppercase font-semibold tracking-wide mb-1">Calories</div>
+                <div className="text-2xl font-bold text-blue-700">{entry.calories}</div>
+                <div className="text-xs text-blue-400">kcal</div>
+              </div>
+              
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-xl shadow-sm flex flex-col items-center justify-center">
+                <div className="text-xs text-purple-500 uppercase font-semibold tracking-wide mb-1">Meal</div>
+                <div className="text-xl font-bold text-purple-700 capitalize">{entry.type}</div>
+              </div>
+              
+              {entry.waterIntake && entry.waterIntake > 0 ? (
+                <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 p-4 rounded-xl shadow-sm flex flex-col items-center justify-center">
+                  <div className="text-xs text-cyan-500 uppercase font-semibold tracking-wide mb-1">Water</div>
+                  <div className="text-2xl font-bold text-cyan-700">{entry.waterIntake}</div>
+                  <div className="text-xs text-cyan-400">ml</div>
+                </div>
+              ) : (
+                <div className="bg-gradient-to-br from-amber-50 to-amber-100 p-4 rounded-xl shadow-sm flex flex-col items-center justify-center">
+                  <div className="text-xs text-amber-500 uppercase font-semibold tracking-wide mb-1">Time</div>
+                  <div className="text-xl font-bold text-amber-700">{entry.time}</div>
+                </div>
+              )}
+            </div>
+
+            {/* Description */}
+            {entry.description && (
+              <div className="mb-6">
+                <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Description</h4>
+                <div className="bg-gray-50 rounded-xl p-4 text-gray-700 shadow-sm">
+                  {entry.description}
+                </div>
+              </div>
+            )}
+
+            {/* Analyzed Items (if available from AI) */}
+            {analysisResult && analysisResult.items && analysisResult.items.length > 0 && (
+              <div className="mb-6">
+                <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Analyzed Items</h4>
+                <div className="bg-gray-50 rounded-xl overflow-hidden shadow-sm">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="py-3 px-4 text-left font-semibold text-gray-700">Item</th>
+                        <th className="py-3 px-4 text-left font-semibold text-gray-700">Portion</th>
+                        <th className="py-3 px-4 text-right font-semibold text-gray-700">Calories</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysisResult.items.map((item: any, index: number) => (
+                        <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                          <td className="py-3 px-4 font-medium text-gray-800">{item.name}</td>
+                          <td className="py-3 px-4 text-gray-600">{item.portion || '-'}</td>
+                          <td className="py-3 px-4 text-right font-medium text-gray-800">{item.calories}</td>
+                        </tr>
+                      ))}
+                      <tr className="bg-gray-100">
+                        <td colSpan={2} className="py-3 px-4 font-bold text-gray-800">Total</td>
+                        <td className="py-3 px-4 text-right font-bold text-gray-800">{analysisResult.totalCalories}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Action Buttons */}
-            <div className="flex justify-between mt-6">
+            <div className="flex justify-between mt-8">
               <button
                 onClick={onDelete}
-                className="px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100"
+                className="px-5 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 flex items-center font-medium transition-colors duration-200"
               >
+                <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
                 Delete
               </button>
               <button
                 onClick={onEdit}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                className="px-5 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 flex items-center font-medium transition-all duration-200 shadow-sm hover:shadow"
               >
+                <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
                 Edit
               </button>
             </div>

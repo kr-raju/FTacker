@@ -114,7 +114,7 @@ export default function ConnectionsPage() {
       }
       
       // Create connection request
-      await createConnectionRequest(user.id, targetUser.id);
+      await createConnectionRequest(user.id, connectionEmail);
       
       // Refresh connections
       await loadConnections(user);

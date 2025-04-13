@@ -20,6 +20,8 @@ export const analyzeFoodImage = async (imageBase64: string): Promise<FoodAnalysi
       3. Identify any drinks visible (water, coffee, soda, etc.)
       4. Estimate portion sizes where possible
       5. Identify any side dishes
+      6. Assess the overall healthiness of the meal (on a scale of 1-10)
+      7. Provide health benefits or concerns based on the food composition
       
       Format your response as a valid JSON object with the following structure:
       {
@@ -28,13 +30,17 @@ export const analyzeFoodImage = async (imageBase64: string): Promise<FoodAnalysi
             "name": "item name",
             "calories": estimated calories (number),
             "portion": "estimated portion size (e.g., '1 cup', '250g', etc.)",
-            "type": "breakfast/lunch/dinner/snacks/coffee/custom"
+            "type": "breakfast/lunch/dinner/snacks/coffee/custom",
+            "isHealthy": true/false (whether this item is considered healthy)
           }
         ],
         "totalCalories": sum of all calories,
         "mealType": "best guess for meal type (breakfast/lunch/dinner/snacks/coffee/custom)",
         "waterIntake": estimated water intake in ml (if visible, otherwise 0),
-        "description": "brief description of the overall meal"
+        "description": "brief description of the overall meal",
+        "healthScore": number from 1-10 (10 being the healthiest),
+        "healthAssessment": "brief assessment of meal's nutritional value, health benefits, and any concerns",
+        "healthyAlternatives": "suggestions for making this meal healthier (if applicable)"
       }
       
       Be precise with your analysis and provide realistic calorie estimates.
@@ -108,6 +114,23 @@ export const analyzeFoodImage = async (imageBase64: string): Promise<FoodAnalysi
         parsedResult.waterIntake = 0;
       }
       
+      // Ensure health score exists (with default value if missing)
+      if (parsedResult.healthScore === undefined) {
+        parsedResult.healthScore = 5; // Default to neutral score
+      }
+      
+      // Ensure health assessment exists
+      if (!parsedResult.healthAssessment) {
+        // Generate a basic assessment based on calories if missing
+        if (parsedResult.totalCalories < 300) {
+          parsedResult.healthAssessment = "Low calorie meal, likely good for weight management.";
+        } else if (parsedResult.totalCalories < 600) {
+          parsedResult.healthAssessment = "Moderate calorie meal, suitable for most diets.";
+        } else {
+          parsedResult.healthAssessment = "Higher calorie meal, may want to balance with lighter meals throughout the day.";
+        }
+      }
+      
       return parsedResult;
     } catch (parseError) {
       console.error("Error parsing JSON from AI response:", parseError);
@@ -121,7 +144,9 @@ export const analyzeFoodImage = async (imageBase64: string): Promise<FoodAnalysi
       totalCalories: 200,
       mealType: "custom",
       waterIntake: 0,
-      description: "Food image (analysis failed)"
+      description: "Food image (analysis failed)",
+      healthScore: 5,
+      healthAssessment: "Could not assess health value of meal."
     };
   }
 }; 

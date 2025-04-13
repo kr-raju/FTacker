@@ -5,6 +5,7 @@ export interface FoodItem {
   calories: number;
   portion?: string;
   type?: MealType;
+  isHealthy?: boolean;
 }
 
 export interface FoodAnalysisResult {
@@ -13,6 +14,9 @@ export interface FoodAnalysisResult {
   mealType: MealType;
   waterIntake: number;
   description: string;
+  healthScore?: number;
+  healthAssessment?: string;
+  healthyAlternatives?: string;
 }
 
 export interface FoodImageData {

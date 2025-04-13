@@ -136,7 +136,7 @@ export default function Connections() {
                     }`}>{connection.status}</span>
                   </p>
                   <p className="text-sm text-gray-500">
-                    {connection.role === 'sender' ? 'You sent this request' : 'Request received'}
+                    {connection.role === 'requester' ? 'You sent this request' : 'Request received'}
                   </p>
                 </div>
                 
@@ -162,7 +162,7 @@ export default function Connections() {
                   
                   {(connection.status === CONNECTION_STATUS.Accepted || 
                     connection.status === CONNECTION_STATUS.Rejected ||
-                    (connection.status === CONNECTION_STATUS.Pending && connection.role === 'sender')) && (
+                    (connection.status === CONNECTION_STATUS.Pending && connection.role === 'requester')) && (
                     <button
                       onClick={() => handleDeleteConnection(connection.id)}
                       className="bg-gray-600 text-white px-3 py-1 rounded-md text-sm hover:bg-gray-700"
